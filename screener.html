@@ -103,6 +103,27 @@ td{padding:9px 10px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:
 .notif.price{background:rgba(219,154,77,.1);border:1px solid rgba(219,154,77,.3);color:#ffba5c}
 .notif-time{font-size:10px;opacity:.8}
 .empty{padding:2rem;text-align:center;color:#aaa;font-size:13px;font-weight:700}
+/* ── OPTIONS FLOW ── */
+.flow-panel{border:1px solid #2a2a3a;border-radius:10px;padding:1rem;margin-bottom:1rem;background:#0d0d10}
+.flow-hdr{font-size:13px;font-weight:800;color:#fff;margin-bottom:.75rem;display:flex;justify-content:space-between;align-items:center}
+.flow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:.75rem}
+.flow-stat{background:#16161e;border-radius:8px;padding:8px 10px;border:1px solid #2a2a3a;text-align:center}
+.flow-lbl{font-size:9px;color:#ccc;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px;font-weight:700}
+.flow-val{font-size:16px;font-weight:800}
+.flow-bull{color:#5aff7a}.flow-bear{color:#ff5a5a}.flow-neut{color:#ffba5c}
+.sentiment-bar{display:flex;align-items:center;gap:8px;margin-bottom:.75rem;font-size:11px;font-weight:700}
+.sent-label{color:#fff;min-width:80px}
+.sent-track{flex:1;height:8px;background:#1a1a22;border-radius:4px;overflow:hidden}
+.sent-fill{height:8px;border-radius:4px;transition:width .4s}
+.unusual-table{width:100%;border-collapse:collapse;font-size:11px}
+.unusual-table th{padding:6px 8px;text-align:left;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#aaa;font-weight:700;border-bottom:1px solid #2a2a3a}
+.unusual-table td{padding:6px 8px;border-bottom:1px solid #1a1a22;font-weight:600}
+.unusual-table tr:last-child td{border-bottom:none}
+.flow-loading{text-align:center;color:#aaa;padding:1rem;font-size:12px;font-weight:700}
+.pc-bull{color:#5aff7a}.pc-bear{color:#ff5a5a}.pc-neut{color:#ffba5c}
+.opt-tag{font-size:9px;padding:2px 6px;border-radius:6px;font-weight:800}
+.opt-call{background:rgba(77,184,77,.15);color:#5aff7a;border:1px solid rgba(77,184,77,.3)}
+.opt-put{background:rgba(255,90,90,.15);color:#ff5a5a;border:1px solid rgba(255,90,90,.3)}
 @media(max-width:640px){
   .stats-row{grid-template-columns:repeat(3,minmax(0,1fr))}
   .stats-row .stat:nth-child(4),.stats-row .stat:nth-child(5){display:none}
@@ -116,7 +137,7 @@ td{padding:9px 10px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:
 <div class="app">
 
   <div class="topbar">
-    <div class="brand">MA<span>CROSS</span> + VWAP</div>
+    <div class="brand">MA<span>CROSS</span> + VWAP + OPTIONS</div>
     <div class="status-row">
       <span id="modeBadge" class="mode-badge mode-sim">starting</span>
       <div class="status"><span id="statusDot" class="sim-dot"></span><span id="statusTxt">initializing...</span></div>
@@ -199,6 +220,15 @@ td{padding:9px 10px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:
         <div class="score-bar-bg"><div class="score-bar-fill" id="scoreBar"></div></div>
       </div>
       <div style="position:relative;height:240px"><canvas id="mainChart" role="img" aria-label="Price chart with MA13, MA48, and VWAP">MA + VWAP chart</canvas></div>
+    </div>
+
+    <!-- OPTIONS FLOW PANEL -->
+    <div class="flow-panel" id="flowPanel" style="display:none">
+      <div class="flow-hdr">
+        <span>&#127942; Institutional Options Flow — <span id="flowTicker">—</span></span>
+        <span id="flowSentBadge" style="font-size:11px;padding:3px 10px;border-radius:10px;background:#1a1a22;border:1px solid #333">loading...</span>
+      </div>
+      <div id="flowContent"><div class="flow-loading">Fetching options data from Tradier...</div></div>
     </div>
   </div>
 
@@ -463,6 +493,7 @@ function setTimeframe(tf){
   document.getElementById('tfDesc').textContent=TF_CONFIG[tf].desc;
   document.getElementById('s-tf').textContent=TF_CONFIG[tf].label;
   document.getElementById('chartPanel').style.display='none';
+  document.getElementById('flowPanel').style.display='none';
   runScan();
 }
 
@@ -559,6 +590,111 @@ function showChart(i){
     }
   });
   document.getElementById('chartPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+  // Load options flow for this ticker
+  loadOptionsFlow(s.ticker);
+}
+
+// ── OPTIONS FLOW ──────────────────────────────────────────────────────────────
+const optionsCache = {};
+async function loadOptionsFlow(ticker){
+  const panel  = document.getElementById('flowPanel');
+  const content= document.getElementById('flowContent');
+  const tickEl = document.getElementById('flowTicker');
+  const sentEl = document.getElementById('flowSentBadge');
+
+  panel.style.display='block';
+  tickEl.textContent=ticker;
+  sentEl.textContent='loading...';
+  sentEl.style.cssText='font-size:11px;padding:3px 10px;border-radius:10px;background:#1a1a22;border:1px solid #333;color:#aaa';
+  content.innerHTML='<div class="flow-loading">&#8987; Fetching options flow from Tradier...</div>';
+
+  // Use cache if fresh (< 5 min)
+  if(optionsCache[ticker] && Date.now()-optionsCache[ticker].ts < 300000){
+    renderOptionsFlow(optionsCache[ticker].data);
+    return;
+  }
+
+  try{
+    const r = await fetch(`${BACKEND}/options?symbol=${ticker}`);
+    const data = await r.json();
+    if(data.error){
+      content.innerHTML=`<div class="flow-loading" style="color:#ff5a5a">&#9888; ${data.error}</div>`;
+      return;
+    }
+    optionsCache[ticker]={data,ts:Date.now()};
+    renderOptionsFlow(data);
+  }catch(e){
+    content.innerHTML='<div class="flow-loading" style="color:#ff5a5a">Could not load options data</div>';
+  }
+}
+
+function renderOptionsFlow(d){
+  const sentEl=document.getElementById('flowSentBadge');
+  const content=document.getElementById('flowContent');
+
+  // Sentiment badge
+  const sentColor=d.sentiment==='bullish'?'#5aff7a':d.sentiment==='bearish'?'#ff5a5a':'#ffba5c';
+  const sentBg=d.sentiment==='bullish'?'rgba(77,184,77,.15)':d.sentiment==='bearish'?'rgba(255,90,90,.15)':'rgba(219,154,77,.15)';
+  const sentBorder=d.sentiment==='bullish'?'rgba(77,184,77,.4)':d.sentiment==='bearish'?'rgba(255,90,90,.4)':'rgba(219,154,77,.4)';
+  const sentIcon=d.sentiment==='bullish'?'&#129345;':d.sentiment==='bearish'?'&#129344;':'&#9889;';
+  sentEl.innerHTML=`${sentIcon} ${d.sentiment.toUpperCase()} FLOW`;
+  sentEl.style.cssText=`font-size:11px;padding:3px 10px;border-radius:10px;background:${sentBg};border:1px solid ${sentBorder};color:${sentColor};font-weight:800`;
+
+  // PC ratio color
+  const pc=parseFloat(d.pcRatio);
+  const pcClass=isNaN(pc)?'pc-neut':pc<0.7?'pc-bull':pc>1.2?'pc-bear':'pc-neut';
+
+  // Flow score bar
+  const flowPct=(d.flowScore/3*100).toFixed(0);
+  const flowColor=d.flowScore>=2?'#5aff7a':d.flowScore===1?'#ffba5c':'#ff5a5a';
+
+  // Unusual options table
+  const unusualRows=d.topUnusual&&d.topUnusual.length
+    ?d.topUnusual.map(u=>`
+      <tr>
+        <td>${u.exp}</td>
+        <td>$${u.strike}</td>
+        <td><span class="opt-tag opt-${u.type}">${u.type.toUpperCase()}</span></td>
+        <td class="${u.type==='call'?'green':'red'}">${u.volume?.toLocaleString()}</td>
+        <td class="amber">${u.volRatio}</td>
+        <td class="${u.type==='call'?'green':'red'}">${u.ratio}</td>
+      </tr>`).join('')
+    :'<tr><td colspan="6" style="text-align:center;color:#aaa;padding:12px">No unusual activity detected</td></tr>';
+
+  content.innerHTML=`
+    <div class="flow-grid">
+      <div class="flow-stat">
+        <div class="flow-lbl">put/call ratio</div>
+        <div class="flow-val ${pcClass}">${d.pcRatio}</div>
+      </div>
+      <div class="flow-stat">
+        <div class="flow-lbl">call volume</div>
+        <div class="flow-val green">${d.totalCallVol?.toLocaleString()||'—'}</div>
+      </div>
+      <div class="flow-stat">
+        <div class="flow-lbl">put volume</div>
+        <div class="flow-val red">${d.totalPutVol?.toLocaleString()||'—'}</div>
+      </div>
+      <div class="flow-stat">
+        <div class="flow-lbl">unusual alerts</div>
+        <div class="flow-val amber">${d.unusualCount||0}</div>
+      </div>
+    </div>
+    <div class="sentiment-bar">
+      <span class="sent-label">Flow Score</span>
+      <div class="sent-track"><div class="sent-fill" style="width:${flowPct}%;background:${flowColor}"></div></div>
+      <span style="color:${flowColor};font-size:11px;min-width:30px">${d.flowScore}/3</span>
+    </div>
+    <div style="font-size:11px;color:#ccc;margin-bottom:6px;font-weight:700">&#9889; Unusual Options Activity (top sweeps)</div>
+    <table class="unusual-table">
+      <thead><tr>
+        <th>expiry</th><th>strike</th><th>type</th><th>volume</th><th>vs avg</th><th>vol/oi</th>
+      </tr></thead>
+      <tbody>${unusualRows}</tbody>
+    </table>
+    <div style="font-size:10px;color:#555;margin-top:8px;font-weight:600">
+      P/C &lt; 0.7 = bullish flow &nbsp;|&nbsp; P/C &gt; 1.2 = bearish flow &nbsp;|&nbsp; Vol/OI &gt; 0.5 = sweep activity
+    </div>`;
 }
 function addLog(s,type){
   const cfg=TF_CONFIG[s.tf||'1d'];
