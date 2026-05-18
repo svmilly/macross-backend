@@ -180,6 +180,17 @@ td{padding:9px 10px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:
       <button class="pill" id="f-bear" onclick="setFilter('bear')">&#9660; bearish</button>
       <button class="pill" id="f-conf" onclick="setFilter('conf')">&#9733; confirmed only</button>
     </div>
+
+    <!-- OPTIONS FLOW SEARCH BOX -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:.75rem;padding:10px 14px;background:#13131a;border:1px solid #2a2a3a;border-radius:10px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#fff;font-weight:800;letter-spacing:.07em;text-transform:uppercase;white-space:nowrap">&#127942; Options Flow Lookup:</span>
+      <input id="flowSearch" type="text" placeholder="Enter ticker e.g. AAPL" 
+        style="font-size:12px;font-family:'Courier New',monospace;height:32px;padding:0 10px;background:#16161e;border:1px solid #333;color:#fff;border-radius:6px;width:160px;text-transform:uppercase;font-weight:700"
+        onkeydown="if(event.key==='Enter')lookupOptionsFlow()"
+      >
+      <button class="btn primary" onclick="lookupOptionsFlow()" style="padding:5px 14px">&#9906; analyze flow</button>
+      <span style="font-size:10px;color:#888;font-weight:600">Search any ticker for institutional options activity — not limited to screener results</span>
+    </div>
     <div class="tbl-wrap">
       <table>
         <thead><tr>
@@ -592,6 +603,59 @@ function showChart(i){
   document.getElementById('chartPanel').scrollIntoView({behavior:'smooth',block:'nearest'});
   // Load options flow for this ticker
   loadOptionsFlow(s.ticker);
+}
+
+// ── OPTIONS FLOW SEARCH ───────────────────────────────────────────────────────
+async function lookupOptionsFlow(){
+  const input = document.getElementById('flowSearch');
+  const ticker = input.value.toUpperCase().trim();
+  if(!ticker){ input.focus(); return; }
+
+  // Show the flow panel and price panel
+  const flowPanel  = document.getElementById('flowPanel');
+  const chartPanel = document.getElementById('chartPanel');
+  flowPanel.style.display='block';
+  document.getElementById('flowTicker').textContent=ticker;
+  document.getElementById('flowContent').innerHTML='<div class="flow-loading">&#8987; Fetching options flow for '+ticker+'...</div>';
+  document.getElementById('flowSentBadge').textContent='loading...';
+  document.getElementById('flowSentBadge').style.cssText='font-size:11px;padding:3px 10px;border-radius:10px;background:#1a1a22;border:1px solid #333;color:#aaa';
+
+  // Scroll to flow panel
+  flowPanel.scrollIntoView({behavior:'smooth',block:'nearest'});
+
+  // Also fetch price chart for this ticker
+  try{
+    const priceRes = await fetch(`${BACKEND}/quote?symbol=${ticker}&interval=1d&range=3mo`);
+    const priceData = await priceRes.json();
+    if(!priceData.error && priceData.closes && priceData.closes.length > 1){
+      chartPanel.style.display='block';
+      document.getElementById('chartTk').textContent=ticker+' — Options Flow Lookup';
+      document.getElementById('chartSub').textContent='Price chart (last 3 months) · Click a screener row for full MA/VWAP analysis';
+      document.getElementById('addAlertBtn').textContent='+ Alert for '+ticker;
+      document.getElementById('tfContext').innerHTML='';
+      document.getElementById('convCard').innerHTML='';
+      document.getElementById('scoreBar').style.width='0%';
+      document.getElementById('scoreLabel').textContent='—';
+      if(chartInst)chartInst.destroy();
+      chartInst=new Chart(document.getElementById('mainChart'),{
+        type:'line',
+        data:{labels:priceData.labels,datasets:[
+          {label:'Price',data:priceData.closes,borderColor:'#5aaeff',borderWidth:2,pointRadius:0,tension:.3}
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+          plugins:{legend:{display:false},tooltip:{backgroundColor:'#1a1a22',borderColor:'#444',borderWidth:1,titleColor:'#fff',bodyColor:'#fff',callbacks:{label:ctx=>` Price: $${ctx.raw!=null?ctx.raw.toFixed(2):'—'}`}}},
+          scales:{
+            x:{ticks:{maxTicksLimit:8,color:'#ddd',font:{size:11,weight:'bold'}},grid:{color:'rgba(255,255,255,.05)'}},
+            y:{ticks:{color:'#ddd',font:{size:11,weight:'bold'},callback:v=>'$'+v.toFixed(0)},grid:{color:'rgba(255,255,255,.05)'}}
+          }
+        }
+      });
+    }
+  }catch(e){}
+
+  // Load options flow
+  await loadOptionsFlow(ticker);
+  input.value='';
 }
 
 // ── OPTIONS FLOW ──────────────────────────────────────────────────────────────
