@@ -830,8 +830,10 @@ function sortBy(col){
 }
 function sortTable(){
   filtered.sort((a,b)=>{
-    let av=a[col==='strat'?'strat':sortCol],bv=b[col==='strat'?'strat':sortCol];
-    if(sortCol==='strat'){av=a.strat.type;bv=b.strat.type;}
+    let av,bv;
+    if(sortCol==='strat'){av=a.strat?a.strat.type:'';bv=b.strat?b.strat.type:'';}
+    else{av=a[sortCol];bv=b[sortCol];}
+    if(av==null)av=0;if(bv==null)bv=0;
     if(typeof av==='string')return sortDir*av.localeCompare(bv);
     return sortDir*(av-bv);
   });
