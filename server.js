@@ -112,6 +112,27 @@ app.get('/options', async (req, res) => {
 
 function nullFlow(sym){return{symbol:sym,pcRatio:'N/A',totalCallVol:0,totalPutVol:0,totalVol:0,unusualCount:0,topUnusual:[],flowScore:1,sentiment:'neutral'};}
 
+// ── Diagnostic endpoint — shows raw Tradier response ─────────────────────────
+app.get('/tradier-test', async (req,res)=>{
+  if(!TRADIER_TOKEN) return res.json({error:'no token'});
+  try{
+    // Test 1: profile (confirms token works)
+    const profile = await tradierGet('/v1/user/profile');
+    // Test 2: quotes (confirms market data access)
+    const quote = await tradierGet('/v1/markets/quotes?symbols=AAPL');
+    // Test 3: expirations
+    const exp = await tradierGet('/v1/markets/options/expirations?symbol=AAPL&includeAllRoots=true');
+    res.json({
+      tokenFirstChars: TRADIER_TOKEN.substring(0,8)+'...',
+      profile: profile?.profile?.account?.type || profile,
+      quoteStatus: quote?.quotes?.quote?.symbol || quote,
+      expirations: exp?.expirations?.date?.slice?.(0,3) || exp
+    });
+  }catch(e){
+    res.json({error:e.message});
+  }
+});
+
 function tradierGet(endpoint){
   return new Promise((resolve,reject)=>{
     const opts={hostname:'api.tradier.com',path:endpoint,headers:{'Authorization':'Bearer '+TRADIER_TOKEN,'Accept':'application/json'}};
