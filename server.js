@@ -75,7 +75,7 @@ app.get('/options', async (req, res) => {
     const expirations = await tradierGet('/v1/markets/options/expirations?symbol=' + sym + '&includeAllRoots=true');
     if (!expirations?.expirations?.date) return res.json(nullFlow(sym));
     const dates = Array.isArray(expirations.expirations.date)
-      ? expirations.expirations.date.slice(0, 4)
+      ? expirations.expirations.date.slice(0, 12)  // next 12 expirations (~3 months out)
       : [expirations.expirations.date];
     const chains = await Promise.all(dates.map(exp =>
       tradierGet('/v1/markets/options/chains?symbol=' + sym + '&expiration=' + exp + '&greeks=false').catch(() => null)
@@ -91,14 +91,14 @@ app.get('/options', async (req, res) => {
         const vol=o.volume||0,oi=o.open_interest||0;
         if(o.option_type==='call'){totalCallVol+=vol;totalCallOI+=oi;}
         else{totalPutVol+=vol;totalPutOI+=oi;}
-        if(vol>meanVol*3&&vol>100){
+        if(vol>meanVol*2&&vol>50){  // lowered from 3x/100 to 2x/50 to catch more activity
           unusual.push({exp:dates[ci],strike:o.strike,type:o.option_type,volume:vol,oi,
             ratio:vol>0&&oi>0?(vol/oi).toFixed(2):'N/A',volRatio:(vol/meanVol).toFixed(1)+'x',itm:o.in_the_money||false});
         }
       });
     });
     unusual.sort((a,b)=>b.volume-a.volume);
-    const topUnusual=unusual.slice(0,5);
+    const topUnusual=unusual.slice(0,10);
     const pcRatio=totalCallVol>0?(totalPutVol/totalCallVol).toFixed(2):'N/A';
     const pcNum=parseFloat(pcRatio);
     let flowScore=0;
