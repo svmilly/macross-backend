@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Level Ladder — Prior Day &amp; Premarket Levels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0e14;
+    --surface:#12161f;
+    --surface-2:#171c28;
+    --border:#232937;
+    --text:#e7eaf0;
+    --text-muted:#8891a3;
+    --text-dim:#4b5262;
+    --amber:#d9a441;
+    --amber-dim:rgba(217,164,65,.16);
+    --teal:#4fb6a8;
+    --teal-dim:rgba(79,182,168,.16);
+    --green:#57c278;
+    --red:#e1614f;
+    --radius:10px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-mono:'IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 500px at 15% -10%, rgba(217,164,65,.06), transparent 60%),
+      radial-gradient(1000px 500px at 100% 0%, rgba(79,182,168,.05), transparent 55%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-mono);
+    min-height:100vh;
+  }
+  .app{max-width:1180px;margin:0 auto;padding:28px 24px 60px;}
+
+  .topbar{
+    display:flex;justify-content:space-between;align-items:flex-end;
+    flex-wrap:wrap;gap:16px;
+    border-bottom:1px solid var(--border);
+    padding-bottom:20px;margin-bottom:20px;
+  }
+  .eyebrow{
+    font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;
+    color:var(--amber);text-transform:uppercase;
+  }
+  h1{
+    font-family:var(--font-display);font-size:28px;font-weight:700;
+    margin:4px 0 4px;letter-spacing:-.01em;
+  }
+  .tagline{margin:0;color:var(--text-muted);font-size:13px;}
+
+  .status-block{
+    display:flex;align-items:center;gap:8px;
+    font-size:12px;color:var(--text-muted);
+    background:var(--surface);border:1px solid var(--border);
+    padding:8px 12px;border-radius:999px;
+  }
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);flex:none;}
+  .status-dot.pending{background:var(--amber);animation:pulse 1s infinite ease-in-out;}
+  .status-dot.ok{background:var(--green);}
+  .status-dot.err{background:var(--red);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+  .controls{
+    display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;
+    margin-bottom:16px;
+  }
+  .control-group{display:flex;flex-direction:column;gap:6px;}
+  .control-group.grow{flex:1;min-width:220px;}
+  label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);}
+  input[type="text"]{
+    font-family:var(--font-mono);font-size:13px;color:var(--text);
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;padding:9px 11px;outline:none;
+    min-width:0;
+  }
+  #backendInput{width:280px;}
+  input[type="text"]:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-dim);}
+  .ticker-add{display:flex;gap:8px;}
+  .ticker-add input{width:120px;text-transform:uppercase;}
+
+  button{
+    font-family:var(--font-mono);font-size:12px;font-weight:600;
+    letter-spacing:.03em;cursor:pointer;
+    border-radius:8px;border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text);
+    padding:9px 14px;
+  }
+  button:hover{border-color:var(--text-dim);}
+  button.primary{background:var(--amber);color:#1a1305;border-color:var(--amber);}
+  button.primary:hover{filter:brightness(1.08);}
+  button:disabled{opacity:.5;cursor:default;}
+
+  .actions{display:flex;gap:12px;align-items:center;}
+  .auto-refresh{
+    display:flex;align-items:center;gap:6px;font-size:11px;
+    color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;
+    cursor:pointer;
+  }
+  .auto-refresh input{accent-color:var(--amber);}
+
+  .error-banner{
+    background:var(--red-dim,rgba(225,97,79,.1));border:1px solid var(--red);
+    color:var(--text);font-size:12px;padding:10px 14px;border-radius:8px;
+    margin-bottom:18px;line-height:1.5;
+  }
+  .error-banner b{color:var(--red);}
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+    gap:16px;
+  }
+  .card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:16px 18px 18px;
+    animation:rise .35s ease both;
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  .card.empty{display:flex;flex-direction:column;gap:10px;opacity:.6;}
+  .empty-state{color:var(--text-dim);font-size:12px;padding:14px 0;}
+
+  .card-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .symbol{
+    font-family:var(--font-display);font-weight:700;font-size:16px;
+    letter-spacing:.03em;
+  }
+  .last-price{font-weight:600;font-size:14px;margin-left:auto;color:var(--text-muted);}
+  .last-price.up{color:var(--green);}
+  .last-price.down{color:var(--red);}
+  .remove{
+    background:none;border:none;color:var(--text-dim);
+    font-size:16px;line-height:1;padding:2px 4px;border-radius:4px;
+  }
+  .remove:hover{color:var(--red);border:none;}
+
+  .ladder{position:relative;height:34px;margin:26px 4px 14px;}
+  .track{
+    position:absolute;left:0;right:0;top:50%;height:3px;
+    background:var(--surface-2);border-radius:2px;transform:translateY(-50%);
+  }
+  .tick{
+    position:absolute;top:50%;width:10px;height:10px;border-radius:50%;
+    transform:translate(-50%,-50%);border:2px solid var(--surface);
+  }
+  .tick.amber{background:var(--amber);}
+  .tick.teal{background:var(--teal);}
+  .last-marker{
+    position:absolute;top:-14px;bottom:-8px;width:2px;
+    background:var(--text);transform:translateX(-50%);opacity:.85;
+  }
+  .last-flag{
+    position:absolute;top:-22px;left:50%;transform:translateX(-50%);
+    font-size:10px;font-weight:600;background:var(--text);color:var(--bg);
+    padding:2px 6px;border-radius:4px;white-space:nowrap;
+  }
+
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;}
+  .chip{
+    display:flex;flex-direction:column;gap:2px;
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:6px 10px;min-width:64px;
+  }
+  .chip-label{font-size:9px;letter-spacing:.08em;color:var(--text-dim);}
+  .chip.amber .chip-label{color:var(--amber);}
+  .chip.teal .chip-label{color:var(--teal);}
+  .chip-value{font-size:12.5px;font-weight:600;}
+  .chip-delta{font-size:10.5px;}
+  .chip-delta.above{color:var(--red);}
+  .chip-delta.below{color:var(--green);}
+
+  .meta{margin-top:10px;font-size:10.5px;color:var(--text-dim);}
+
+  .contract-note{
+    margin-top:28px;padding-top:16px;border-top:1px solid var(--border);
+    font-size:11px;color:var(--text-dim);line-height:1.7;
+  }
+  .contract-note code{
+    background:var(--surface-2);border:1px solid var(--border);
+    padding:1px 5px;border-radius:4px;color:var(--text-muted);
+  }
+
+  @media (max-width:520px){
+    .topbar{flex-direction:column;align-items:flex-start;}
+    #backendInput{width:100%;}
+    .controls{flex-direction:column;align-items:stretch;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="eyebrow">Garytrades Desk</div>
+      <h1>Level Ladder</h1>
+      <p class="tagline">Prior day range + premarket range, scanned before the bell.</p>
+    </div>
+    <div class="status-block">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Not connected</span>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="control-group">
+      <label for="backendInput">Backend URL</label>
+      <input id="backendInput" type="text" spellcheck="false" />
+    </div>
+    <div class="control-group grow">
+      <label for="tickerInput">Add ticker</label>
+      <div class="ticker-add">
+        <input id="tickerInput" type="text" placeholder="e.g. AMD" maxlength="6" spellcheck="false" />
+        <button id="addTickerBtn">Add</button>
+      </div>
+    </div>
+    <div class="control-group actions">
+      <button id="refreshBtn" class="primary">Refresh</button>
+      <label class="auto-refresh">
+        <input type="checkbox" id="autoRefreshToggle" />
+        Auto 60s
+      </label>
+    </div>
+  </section>
+
+  <div class="error-banner" id="errorBanner" hidden></div>
+
+  <main class="grid" id="grid"></main>
+
+  <footer class="contract-note">
+    <b>Expected endpoint —</b> <code>GET {backend}/api/levels?symbols=A,B,C</code> returns
+    <code>{ levels: [{ symbol, prevHigh, prevLow, prevClose, pmHigh, pmLow, lastPrice }] }</code>.
+    Amber = prior day levels (PDH / PDC / PDL). Teal = premarket levels (PMH / PML). The white flag is last price.
+  </footer>
+
+</div>
+
+<script>
+  const DEFAULT_SYMBOLS = ['SPY','QQQ','AAPL','NVDA','TSLA','MSFT'];
+  const DEFAULT_BACKEND = 'https://garytrades.up.railway.app';
+
+  const state = {
+    backendUrl: DEFAULT_BACKEND,
+    symbols: [...DEFAULT_SYMBOLS],
+    data: {},
+    loading: false,
+    autoTimer: null,
+  };
+
+  const el = id => document.getElementById(id);
+  const grid = el('grid');
+  const backendInput = el('backendInput');
+  const tickerInput = el('tickerInput');
+  const addTickerBtn = el('addTickerBtn');
+  const refreshBtn = el('refreshBtn');
+  const autoRefreshToggle = el('autoRefreshToggle');
+  const errorBanner = el('errorBanner');
+  const statusDot = el('statusDot');
+  const statusText = el('statusText');
+
+  const fmt = v => v == null || isNaN(v) ? '—' : `$${Number(v).toFixed(2)}`;
+
+  function setStatus(kind, text){
+    statusDot.className = 'status-dot ' + kind;
+    statusText.textContent = text;
+  }
+
+  function showError(msg){
+    if (!msg){ errorBanner.hidden = true; errorBanner.textContent=''; return; }
+    errorBanner.hidden = false;
+    errorBanner.innerHTML = `<b>Connection issue —</b> ${msg} Check the backend URL, confirm the <code>/api/levels</code> route is deployed, and that it sends CORS headers allowing this page.`;
+  }
+
+  // ---------- persistence (artifact storage, personal scope) ----------
+  async function loadPersisted(){
+    try {
+      const w = await window.storage.get('levelsDesk:watchlist');
+      if (w && w.value) state.symbols = JSON.parse(w.value);
+    } catch(e) { /* no saved watchlist yet */ }
+    try {
+      const b = await window.storage.get('levelsDesk:backendUrl');
+      if (b && b.value) state.backendUrl = b.value;
+    } catch(e) { /* no saved backend url yet */ }
+    backendInput.value = state.backendUrl;
+  }
+  async function saveWatchlist(){
+    try { await window.storage.set('levelsDesk:watchlist', JSON.stringify(state.symbols)); }
+    catch(e){ console.error('storage save failed', e); }
+  }
+  async function saveBackendUrl(){
+    try { await window.storage.set('levelsDesk:backendUrl', state.backendUrl); }
+    catch(e){ console.error('storage save failed', e); }
+  }
+
+  // ---------- rendering ----------
+  function cardHTML(symbol, d){
+    if (!d){
+      return `<div class="card empty" data-symbol="${symbol}">
+        <div class="card-head">
+          <span class="symbol">${symbol}</span>
+          <button class="remove" data-remove="${symbol}" title="Remove">×</button>
+        </div>
+        <div class="empty-state">${state.loading ? 'Fetching…' : 'No data yet — hit refresh'}</div>
+      </div>`;
+    }
+
+    const last = d.lastPrice;
+    const gapClass = (last == null || d.prevClose == null) ? '' : (last > d.prevClose ? 'up' : last < d.prevClose ? 'down' : '');
+
+    const levels = [
+      { label:'PDH', value:d.prevHigh, color:'amber' },
+      { label:'PDC', value:d.prevClose, color:'amber' },
+      { label:'PDL', value:d.prevLow, color:'amber' },
+      { label:'PMH', value:d.pmHigh, color:'teal' },
+      { label:'PML', value:d.pmLow, color:'teal' },
+    ].filter(l => l.value != null && !isNaN(l.value));
+
+    let ticksHTML = '', lastMarkerHTML = '';
+    if (levels.length){
+      const allVals = levels.map(l=>l.value).concat(last!=null ? [last] : []);
+      const min = Math.min(...allVals), max = Math.max(...allVals);
+      const pad = (max - min) * 0.12 || Math.max(1, min * 0.01);
+      const lo = min - pad, hi = max + pad;
+      const pct = v => hi === lo ? 50 : ((v - lo) / (hi - lo)) * 100;
+
+      ticksHTML = levels.map(l =>
+        `<div class="tick ${l.color}" style="left:${pct(l.value).toFixed(2)}%" title="${l.label} ${fmt(l.value)}"></div>`
+      ).join('');
+
+      if (last != null && !isNaN(last)){
+        lastMarkerHTML = `<div class="last-marker" style="left:${pct(last).toFixed(2)}%">
+          <span class="last-flag">${fmt(last)}</span>
+        </div>`;
+      }
+    }
+
+    const chipsHTML = levels.map(l => {
+      let deltaHTML = '';
+      if (last != null && !isNaN(last) && last !== 0){
+        const delta = (l.value - last) / last * 100;
+        const dir = delta >= 0 ? 'above' : 'below';
+        deltaHTML = `<span class="chip-delta ${dir}">${delta>=0?'+':''}${delta.toFixed(2)}%</span>`;
+      }
+      return `<div class="chip ${l.color}">
+        <span class="chip-label">${l.label}</span>
+        <span class="chip-value">${fmt(l.value)}</span>
+        ${deltaHTML}
+      </div>`;
+    }).join('');
+
+    return `<div class="card" data-symbol="${symbol}">
+      <div class="card-head">
+        <span class="symbol">${symbol}</span>
+        <span class="last-price ${gapClass}">${last!=null && !isNaN(last) ? fmt(last) : '—'}</span>
+        <button class="remove" data-remove="${symbol}" title="Remove">×</button>
+      </div>
+      <div class="ladder">
+        <div class="track"></div>
+        ${ticksHTML}
+        ${lastMarkerHTML}
+      </div>
+      <div class="chips">${chipsHTML || '<span class="empty-state">No levels returned</span>'}</div>
+      ${d.prevDate ? `<div class="meta">Prior session: ${d.prevDate}</div>` : ''}
+    </div>`;
+  }
+
+  function renderGrid(){
+    grid.innerHTML = state.symbols.map(sym => cardHTML(sym, state.data[sym])).join('');
+  }
+
+  // ---------- data ----------
+  async function fetchLevels(){
+    if (!state.symbols.length) return;
+    if (!state.backendUrl){
+      showError('No backend URL set.');
+      return;
+    }
+    state.loading = true;
+    refreshBtn.disabled = true;
+    setStatus('pending', 'Fetching levels…');
+    showError(null);
+
+    try {
+      const base = state.backendUrl.replace(/\/$/, '');
+      const url = `${base}/api/levels?symbols=${encodeURIComponent(state.symbols.join(','))}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}.`);
+      const json = await res.json();
+      const list = json.levels || json.data || json;
+      if (!Array.isArray(list)) throw new Error('Response shape looked unexpected.');
+
+      list.forEach(item => {
+        if (item && item.symbol) state.data[item.symbol.toUpperCase()] = item;
+      });
+
+      setStatus('ok', `Updated ${new Date().toLocaleTimeString()}`);
+    } catch (err){
+      console.error(err);
+      setStatus('err', 'Connection failed');
+      showError(err.message || 'Request failed.');
+    } finally {
+      state.loading = false;
+      refreshBtn.disabled = false;
+      renderGrid();
+    }
+  }
+
+  // ---------- ticker management ----------
+  function addTicker(raw){
+    const sym = (raw || '').trim().toUpperCase().replace(/[^A-Z.]/g, '');
+    if (!sym || state.symbols.includes(sym)) { tickerInput.value=''; return; }
+    state.symbols.push(sym);
+    tickerInput.value = '';
+    saveWatchlist();
+    renderGrid();
+    fetchLevels();
+  }
+  function removeTicker(sym){
+    state.symbols = state.symbols.filter(s => s !== sym);
+    delete state.data[sym];
+    saveWatchlist();
+    renderGrid();
+  }
+
+  // ---------- events ----------
+  addTickerBtn.addEventListener('click', () => addTicker(tickerInput.value));
+  tickerInput.addEventListener('keydown', e => { if (e.key === 'Enter') addTicker(tickerInput.value); });
+
+  refreshBtn.addEventListener('click', fetchLevels);
+
+  backendInput.addEventListener('change', () => {
+    state.backendUrl = backendInput.value.trim();
+    saveBackendUrl();
+  });
+
+  grid.addEventListener('click', e => {
+    const btn = e.target.closest('[data-remove]');
+    if (btn) removeTicker(btn.dataset.remove);
+  });
+
+  autoRefreshToggle.addEventListener('change', () => {
+    if (autoRefreshToggle.checked){
+      state.autoTimer = setInterval(fetchLevels, 60000);
+    } else if (state.autoTimer){
+      clearInterval(state.autoTimer);
+      state.autoTimer = null;
+    }
+  });
+
+  // ---------- init ----------
+  (async function init(){
+    await loadPersisted();
+    renderGrid();
+    fetchLevels();
+  })();
+</script>
+</body>
+</html>
