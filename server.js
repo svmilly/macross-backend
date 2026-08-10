@@ -109,7 +109,81 @@ app.get('/options', async (req, res) => {
       sentiment:flowScore>=2?'bullish':flowScore===1?'neutral':'bearish',timestamp:Date.now()});
   }catch(e){res.status(500).json({error:e.message});}
 });
+// ── Prior-day + premarket levels ──────────────────────────────────────────────
+function isoDateNY(date = new Date()) {
+  return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
+}
+function daysAgoISO(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return isoDateNY(d);
+}
 
+async function getPrevDayLevels(symbol) {
+  const start = daysAgoISO(10);
+  const end = isoDateNY();
+  const data = await tradierGet(`/v1/markets/history?symbol=${symbol}&interval=daily&start=${start}&end=${end}`);
+  const raw = data?.history?.day;
+  if (!raw) return null;
+  const days = Array.isArray(raw) ? raw : [raw];
+  const today = isoDateNY();
+  const prior = days.filter(d => d.date < today);
+  const prev = prior[prior.length - 1];
+  if (!prev) return null;
+  return { prevHigh: prev.high, prevLow: prev.low, prevClose: prev.close, prevDate: prev.date };
+}
+
+async function getPremarketLevels(symbol) {
+  const date = isoDateNY();
+  const start = encodeURIComponent(`${date} 04:00`);
+  const end = encodeURIComponent(`${date} 09:29`);
+  const data = await tradierGet(`/v1/markets/timesales?symbol=${symbol}&interval=1min&start=${start}&end=${end}&session_filter=all`);
+  const raw = data?.series?.data;
+  if (!raw) return { pmHigh: null, pmLow: null };
+  const bars = Array.isArray(raw) ? raw : [raw];
+  const highs = bars.map(b => b.high).filter(v => typeof v === 'number');
+  const lows = bars.map(b => b.low).filter(v => typeof v === 'number');
+  if (!highs.length) return { pmHigh: null, pmLow: null };
+  return { pmHigh: Math.max(...highs), pmLow: Math.min(...lows) };
+}
+
+async function getLastPrice(symbol) {
+  const data = await tradierGet(`/v1/markets/quotes?symbols=${symbol}`);
+  const q = data?.quotes?.quote;
+  if (!q) return null;
+  const quote = Array.isArray(q) ? q[0] : q;
+  return quote?.last ?? quote?.close ?? null;
+}
+
+app.get('/api/levels', async (req, res) => {
+  const symbols = (req.query.symbols || '').toUpperCase().split(',').map(s => s.trim()).filter(Boolean);
+  if (!symbols.length) return res.status(400).json({ error: 'symbols required' });
+  if (!TRADIER_TOKEN) return res.status(503).json({ error: 'Tradier token not configured' });
+
+  const levels = await Promise.all(symbols.map(async symbol => {
+    try {
+      const [prev, pm, last] = await Promise.all([
+        getPrevDayLevels(symbol),
+        getPremarketLevels(symbol),
+        getLastPrice(symbol),
+      ]);
+      return {
+        symbol,
+        prevHigh: prev?.prevHigh ?? null,
+        prevLow: prev?.prevLow ?? null,
+        prevClose: prev?.prevClose ?? null,
+        prevDate: prev?.prevDate ?? null,
+        pmHigh: pm.pmHigh,
+        pmLow: pm.pmLow,
+        lastPrice: last,
+      };
+    } catch (e) {
+      return { symbol, error: e.message };
+    }
+  }));
+
+  res.json({ asOf: new Date().toISOString(), levels });
+});
 function nullFlow(sym){return{symbol:sym,pcRatio:'N/A',totalCallVol:0,totalPutVol:0,totalVol:0,unusualCount:0,topUnusual:[],flowScore:1,sentiment:'neutral'};}
 
 // ── Diagnostic endpoint — shows raw Tradier response ─────────────────────────
