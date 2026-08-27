@@ -50,3 +50,10 @@ CREATE TABLE IF NOT EXISTS executed_orders (
 
 CREATE INDEX IF NOT EXISTS idx_executed_orders_signal ON executed_orders (signal_id);
 CREATE INDEX IF NOT EXISTS idx_executed_orders_ticker ON executed_orders (ticker, requested_at);
+
+-- Option-specific columns (nullable — only populated for asset_class = 'option').
+ALTER TABLE executed_orders ADD COLUMN IF NOT EXISTS asset_class TEXT NOT NULL DEFAULT 'equity';
+ALTER TABLE executed_orders ADD COLUMN IF NOT EXISTS occ_symbol TEXT;
+ALTER TABLE executed_orders ADD COLUMN IF NOT EXISTS strike NUMERIC;
+ALTER TABLE executed_orders ADD COLUMN IF NOT EXISTS expiration DATE;
+ALTER TABLE executed_orders ADD COLUMN IF NOT EXISTS option_type TEXT;

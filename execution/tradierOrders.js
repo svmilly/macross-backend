@@ -80,6 +80,70 @@ async function placeEquityOrder({
   return data.order;
 }
 
+// Build a Tradier/OCC-format option symbol from friendly inputs.
+// underlying: 'AAPL'
+// expiration: 'YYYY-MM-DD' (e.g. '2026-09-18')
+// optionType: 'call' | 'put'
+// strike: number, e.g. 230 or 230.5
+//
+// OCC format: {underlying}{YYMMDD}{C|P}{strike * 1000, 8 digits}
+function buildOptionSymbol({ underlying, expiration, optionType, strike }) {
+  const date = new Date(expiration + 'T00:00:00Z');
+  const yy = String(date.getUTCFullYear()).slice(-2);
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  const cp = optionType.toLowerCase() === 'call' ? 'C' : 'P';
+  const strikeInt = Math.round(strike * 1000);
+  const strikeStr = String(strikeInt).padStart(8, '0');
+
+  return `${underlying.toUpperCase()}${yy}${mm}${dd}${cp}${strikeStr}`;
+}
+
+// Place an option order.
+// side: buy_to_open | sell_to_open | buy_to_close | sell_to_close
+// type: market | limit | stop | stop_limit
+// duration: day | gtc
+//
+// Pass either occSymbol directly, or underlying/expiration/optionType/strike
+// and it'll be built for you.
+async function placeOptionOrder({
+  underlying,
+  occSymbol,
+  expiration,
+  optionType,
+  strike,
+  side,
+  quantity,
+  type = 'market',
+  duration = 'day',
+  price,
+  stop,
+}) {
+  assertTradingEnabled();
+
+  const symbol = underlying.toUpperCase();
+  const resolvedOccSymbol =
+    occSymbol || buildOptionSymbol({ underlying, expiration, optionType, strike });
+
+  const params = new URLSearchParams({
+    class: 'option',
+    symbol,
+    option_symbol: resolvedOccSymbol,
+    side,
+    quantity: String(quantity),
+    type,
+    duration,
+  });
+  if (price != null) params.append('price', String(price));
+  if (stop != null) params.append('stop', String(stop));
+
+  const { data } = await client().post(
+    `/accounts/${ACCOUNT_ID}/orders`,
+    params
+  );
+  return { order: data.order, occSymbol: resolvedOccSymbol };
+}
+
 async function getOrderStatus(orderId) {
   assertTradingEnabled();
   const { data } = await client().get(
@@ -99,6 +163,8 @@ async function cancelOrder(orderId) {
 module.exports = {
   tradingEnabled,
   placeEquityOrder,
+  placeOptionOrder,
+  buildOptionSymbol,
   getOrderStatus,
   cancelOrder,
 };
