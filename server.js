@@ -44,8 +44,10 @@ app.get('/ping', (req, res) => res.send('pong'));
 
 // ── Order execution (Tradier) ────────────────────────────────────────────────
 // Isolated module, gated behind TRADING_ENABLED — see execution/README.md.
+// Orders are logged to executed_orders (requires DATABASE_URL / pool) so
+// fills can be traced back to the signal that triggered them.
 const executeRoute = require('./execution/executeRoute');
-app.use('/api', executeRoute);
+app.use('/api', executeRoute(pool));
 
 // ── Signal tracking routes + resolver ───────────────────────────────────────
 if (pool) {

@@ -28,3 +28,25 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE INDEX IF NOT EXISTS idx_signals_unresolved ON signals (outcome) WHERE outcome IS NULL;
 CREATE INDEX IF NOT EXISTS idx_signals_setup_type ON signals (setup_type);
 CREATE INDEX IF NOT EXISTS idx_signals_ticker_date ON signals (ticker, entry_time);
+
+-- Executed orders — audit trail linking real (or sandbox) Tradier orders
+-- back to the signal that triggered them, so fills can be compared against
+-- backtested win-rate/expectancy stats from the signals table.
+CREATE TABLE IF NOT EXISTS executed_orders (
+  id SERIAL PRIMARY KEY,
+  signal_id INT REFERENCES signals(id),  -- nullable: allows manual/ad-hoc test orders too
+  tradier_order_id TEXT,
+  ticker TEXT NOT NULL,
+  side TEXT NOT NULL,                    -- buy, sell, buy_to_cover, sell_short
+  quantity NUMERIC NOT NULL,
+  order_type TEXT NOT NULL DEFAULT 'market',
+  status TEXT,                           -- raw status Tradier returned (ok, rejected, etc.)
+  tradier_env TEXT NOT NULL,             -- 'sandbox' or 'live' — which environment placed it
+  conviction_score INT,
+  error TEXT,                            -- populated if the order attempt failed
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  raw_response JSONB                     -- full Tradier response for debugging
+);
+
+CREATE INDEX IF NOT EXISTS idx_executed_orders_signal ON executed_orders (signal_id);
+CREATE INDEX IF NOT EXISTS idx_executed_orders_ticker ON executed_orders (ticker, requested_at);

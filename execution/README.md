@@ -30,6 +30,22 @@ and Level Ladder dashboard.
    app.use('/api', executeRoute);
    ```
 
+## Order logging
+
+Every call to `POST /api/execute-signal` — success, skip, or failure — is
+logged to the `executed_orders` table (see `schema.sql`), linked to
+`signal_id` when provided. Run `schema.sql` again against your Railway
+Postgres instance to pick up the new table if it doesn't exist yet; `CREATE
+TABLE IF NOT EXISTS` makes it safe to re-run.
+
+Look up what's actually been sent to Tradier with:
+
+```
+GET /api/executed-orders
+GET /api/executed-orders?signal_id=123
+GET /api/executed-orders?ticker=AAPL&since=2026-08-01
+```
+
 ## Recommended rollout
 
 1. Run with `TRADIER_ENV=sandbox` against live signals for a few weeks.
