@@ -12,7 +12,7 @@
 // so fills can be traced back to the signal that triggered them.
 
 const express = require('express');
-const { placeEquityOrder, placeOptionOrder, tradingEnabled } = require('./tradierOrders');
+const { placeEquityOrder, placeOptionOrder, waitForFill, tradingEnabled } = require('./tradierOrders');
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
 
@@ -96,18 +96,23 @@ module.exports = function (pool) {
     try {
       const order = await placeEquityOrder({ symbol, side, quantity, type: 'market' });
 
+      // The POST response only means "accepted" — poll for the actual
+      // terminal status before treating this as a real fill.
+      const { status: confirmedStatus, order: confirmedOrder } =
+        order?.id != null ? await waitForFill(order.id) : { status: order?.status, order };
+
       await logOrder({
         signal_id,
         tradier_order_id: order?.id != null ? String(order.id) : null,
         ticker: symbol,
         side,
         quantity,
-        status: order?.status,
+        status: confirmedStatus,
         conviction_score: conviction,
-        raw_response: order,
+        raw_response: confirmedOrder || order,
       });
 
-      res.json({ order });
+      res.json({ order: confirmedOrder || order, status: confirmedStatus });
     } catch (err) {
       const errPayload = err.response?.data || { message: err.message };
 
@@ -182,15 +187,20 @@ module.exports = function (pool) {
         type: 'market',
       });
 
+      // Same fill-confirmation as equities — don't trust "accepted" as "filled",
+      // especially since a close order later depends on this actually being open.
+      const { status: confirmedStatus, order: confirmedOrder } =
+        order?.id != null ? await waitForFill(order.id) : { status: order?.status, order };
+
       await logOrder({
         signal_id,
         tradier_order_id: order?.id != null ? String(order.id) : null,
         ticker: underlying,
         side,
         quantity,
-        status: order?.status,
+        status: confirmedStatus,
         conviction_score: conviction,
-        raw_response: order,
+        raw_response: confirmedOrder || order,
         asset_class: 'option',
         occ_symbol: occSymbol,
         strike,
@@ -198,7 +208,7 @@ module.exports = function (pool) {
         option_type: optionType,
       });
 
-      res.json({ order, occSymbol });
+      res.json({ order: confirmedOrder || order, occSymbol, status: confirmedStatus });
     } catch (err) {
       const errPayload = err.response?.data || { message: err.message };
 

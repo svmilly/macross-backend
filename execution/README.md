@@ -46,6 +46,20 @@ GET /api/executed-orders?signal_id=123
 GET /api/executed-orders?ticker=AAPL&since=2026-08-01
 ```
 
+## Fill confirmation
+
+Placing an order only confirms Tradier *accepted* it, not that it filled.
+`execute-signal` and `execute-option-signal` now poll the order (up to 5
+times, 1s apart) after placement and log the real terminal status
+(`filled`, `rejected`, `canceled`, `expired`) to `executed_orders` — not
+just the initial accepted response. If it hasn't reached a terminal state
+within that window, the logged status reflects whatever was last observed
+(e.g. `pending`/`open`) rather than being reported as filled.
+
+This matters most for options: a `sell_to_close` sent against a position
+that never actually filled will be rejected by Tradier, as seen in early
+sandbox testing here.
+
 ## Options support
 
 `execute-option-signal` places **entry** orders only (`buy_to_open` /

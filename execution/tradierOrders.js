@@ -152,6 +152,31 @@ async function getOrderStatus(orderId) {
   return data.order;
 }
 
+// Poll an order until it reaches a terminal status (filled, rejected,
+// canceled, expired) or the attempt budget runs out. Tradier's initial
+// POST response only means "accepted", not "filled" — this is what
+// actually confirms whether a position exists before anything downstream
+// (like a close order) assumes it does.
+//
+// Returns { status, order } where status is the final observed status
+// string (which may still be 'pending'/'open' if it never resolved
+// within the attempt budget — that is NOT the same as filled).
+const TERMINAL_STATUSES = new Set(['filled', 'rejected', 'canceled', 'expired']);
+
+async function waitForFill(orderId, { attempts = 5, delayMs = 1000 } = {}) {
+  let lastOrder = null;
+  for (let i = 0; i < attempts; i++) {
+    lastOrder = await getOrderStatus(orderId);
+    if (lastOrder && TERMINAL_STATUSES.has(lastOrder.status)) {
+      return { status: lastOrder.status, order: lastOrder };
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return { status: lastOrder?.status || 'unknown', order: lastOrder };
+}
+
 async function cancelOrder(orderId) {
   assertTradingEnabled();
   const { data } = await client().delete(
@@ -166,5 +191,6 @@ module.exports = {
   placeOptionOrder,
   buildOptionSymbol,
   getOrderStatus,
+  waitForFill,
   cancelOrder,
 };
