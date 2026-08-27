@@ -42,6 +42,11 @@ app.get('/screener', (req, res) => {
 });
 app.get('/ping', (req, res) => res.send('pong'));
 
+// ── Order execution (Tradier) ────────────────────────────────────────────────
+// Isolated module, gated behind TRADING_ENABLED — see execution/README.md.
+const executeRoute = require('./execution/executeRoute');
+app.use('/api', executeRoute);
+
 // ── Signal tracking routes + resolver ───────────────────────────────────────
 if (pool) {
   const signalsRouter = require('./signals');
