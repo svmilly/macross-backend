@@ -49,6 +49,24 @@ app.get('/ping', (req, res) => res.send('pong'));
 const executeRoute = require('./execution/executeRoute');
 app.use('/api', executeRoute(pool));
 
+// Position monitor — watches open positions against stop/target and closes
+// them automatically. Always runs when pool exists (it only ever ACTS when
+// TRADING_ENABLED=true; otherwise it just logs a warning and leaves the
+// position open). See execution/README.md.
+if (pool) {
+  const { startPositionMonitor } = require('./execution/positionMonitor');
+  startPositionMonitor(pool);
+}
+
+// Signal→execution wiring — polls for new signals and auto-fires entries
+// when AUTO_TRADE_ENABLED=true (separate from TRADING_ENABLED — see
+// execution/README.md). Always runs when pool exists so it can log
+// skip/conviction decisions even before auto-trading is turned on.
+if (pool) {
+  const { startSignalWatcher } = require('./execution/signalWatcher');
+  startSignalWatcher(pool);
+}
+
 // ── News / catalyst feed (Finnhub) ──────────────────────────────────────────
 // Isolated module, own FINNHUB_API_KEY env var. Watchlist matches the
 // screener's TICKERS list (kept in sync manually — see WATCHLIST below).

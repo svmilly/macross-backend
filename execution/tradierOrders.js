@@ -336,4 +336,43 @@ module.exports = {
   getExpirations,
   getStrikes,
   resolveContract,
+  closePosition,
 };
+
+// Given an open executed_orders row (an entry), figure out the correct
+// closing side and place that closing order. Only equity 'buy'/'sell_short'
+// entries and option 'buy_to_open'/'sell_to_open' entries are recognized —
+// anything else throws, since the correct close is ambiguous.
+async function closePosition(position) {
+  assertTradingEnabled();
+
+  let closingSide;
+  if (position.asset_class === 'option') {
+    if (position.side === 'buy_to_open') closingSide = 'sell_to_close';
+    else if (position.side === 'sell_to_open') closingSide = 'buy_to_close';
+    else throw new Error(`Cannot determine closing side for option entry side "${position.side}"`);
+
+    const { order } = await placeOptionOrder({
+      underlying: position.ticker,
+      occSymbol: position.occ_symbol,
+      side: closingSide,
+      quantity: position.quantity,
+      type: 'market',
+    });
+    const { status } = order?.id != null ? await waitForFill(order.id) : { status: order?.status };
+    return { side: closingSide, tradierOrderId: order?.id != null ? String(order.id) : null, status };
+  } else {
+    if (position.side === 'buy') closingSide = 'sell';
+    else if (position.side === 'sell_short') closingSide = 'buy_to_cover';
+    else throw new Error(`Cannot determine closing side for equity entry side "${position.side}"`);
+
+    const order = await placeEquityOrder({
+      symbol: position.ticker,
+      side: closingSide,
+      quantity: position.quantity,
+      type: 'market',
+    });
+    const { status } = order?.id != null ? await waitForFill(order.id) : { status: order?.status };
+    return { side: closingSide, tradierOrderId: order?.id != null ? String(order.id) : null, status };
+  }
+}

@@ -99,6 +99,118 @@ Building auto-close is a separate, deliberate piece of work — treat any
 option position opened through this route as something you're watching
 and closing manually until that's built.
 
+## Auto-close (position monitor)
+
+`execution/positionMonitor.js` runs on a 60-second interval and checks every
+open position (`is_closed=false AND status='filled'`) against its
+`stop_price`/`target_price`. When hit, it places the corresponding closing
+order automatically and marks the position `is_closed=true` with a
+`close_reason` of `'stop'` or `'target'`.
+
+**Only positions with `direction` and at least one of `stop_price`/
+`target_price` set are watched.** A position without these is placed but
+never auto-closed — same as before this existed. `direction`/`stop_price`/
+`target_price` are optional fields on `execute-signal`,
+`execute-option-signal`, and `execute-option-signal-auto` — pass them
+explicitly, or link a `signal_id` whose `signals` row already has
+`stop_price`/`target_price` set (they'll be pulled automatically if you
+don't pass your own).
+
+**Options are watched via the UNDERLYING's price, not the option's own
+premium.** `stop_price`/`target_price` follow the same convention as
+`signals.js`/`resolver.js` — they're underlying-price levels the original
+signal was built on. This monitor checks the underlying's quote and closes
+the OPTION position when that underlying level is hit. It does **not**
+track the option's own P&L or premium — a position could be watched
+correctly by this logic while the option itself has moved very differently
+than the underlying's % move would suggest (normal for options, given
+delta/theta/vega), so don't expect stop/target hits here to correspond to
+a specific dollar loss on the premium.
+
+**Manual override:** `POST /api/close-position/:id` closes a specific open
+position immediately, regardless of stop/target — useful for testing or an
+emergency exit. `GET /api/open-positions` lists everything currently open
+and being watched.
+
+**Known limitations, stated plainly:**
+- No market-hours guard — the monitor runs on its interval regardless of
+  whether the market is open. Off-hours quote behavior against this logic
+  is untested; treat that as an open question, not something we've verified
+  is safe.
+- Only recognizes `buy`/`sell_short` (equity) and `buy_to_open`/
+  `sell_to_open` (option) as positions it knows how to close. Anything else
+  is left alone.
+- One closing attempt per hit per cycle — if the close order itself fails
+  (rejected, network error), the position stays open and gets picked up
+  again on the next 60s cycle. There's no backoff or alerting if it keeps
+  failing.
+
+## Signal → execution wiring
+
+`execution/signalWatcher.js` polls the `signals` table every 30 seconds for
+rows where `auto_traded=false`. When it finds one:
+
+1. If `setup_type` isn't in `AUTO_TRADE_SETUP_TYPES` (default:
+   `ma_crossover` only), it's marked `auto_traded=true` and skipped
+   silently — no order, no log row.
+2. If `conviction_score` is below `MIN_CONVICTION_TO_TRADE`, it's logged as
+   `skipped_low_conviction` (same as the manual endpoints) and marked
+   `auto_traded=true`.
+3. Otherwise, **only if `AUTO_TRADE_ENABLED=true` AND `TRADING_ENABLED=true`**,
+   it places an entry — equity or option depending on `AUTO_TRADE_ASSET_CLASS`
+   — using the signal's `direction`, `stop_price`, and `target_price`
+   (so the position monitor above can watch it), then marks the signal
+   `auto_traded=true`.
+
+**`AUTO_TRADE_ENABLED` is deliberately separate from `TRADING_ENABLED`.**
+You can leave `TRADING_ENABLED=true` for manual testing via the HTTP
+endpoints without every new signal firing an order on its own — nothing
+auto-fires until `AUTO_TRADE_ENABLED=true` is set explicitly. If
+`AUTO_TRADE_ENABLED` isn't `'true'`, matching signals are simply left
+un-marked (`auto_traded` stays `false`) so they'll still be picked up once
+you do turn it on, rather than being silently skipped forever.
+
+Env vars (all optional except the two enable flags):
+
+| Var | Default | Notes |
+|---|---|---|
+| `AUTO_TRADE_ENABLED` | unset (off) | must be exactly `'true'` |
+| `AUTO_TRADE_ASSET_CLASS` | `equity` | or `option` |
+| `AUTO_TRADE_SETUP_TYPES` | `ma_crossover` | comma-separated allowlist |
+| `AUTO_TRADE_QUANTITY` | `1` | fixed size per signal — no position sizing logic yet |
+| `AUTO_TRADE_TYPE` | `swing_short` | options only: `0dte`\|`swing_short`\|`swing_long` |
+| `AUTO_TRADE_PCT_OTM` | `0.025` | options only |
+
+**Known limitations, stated plainly:**
+- Fixed quantity per trade — no position sizing based on conviction,
+  account equity, or risk. This is genuinely naive; treat
+  `AUTO_TRADE_QUANTITY` as a placeholder, not a real sizing model.
+- No check for whether you already have an open position on the same
+  ticker — a second signal on a ticker you're already in will open a
+  second position, not add to or skip it.
+- No daily/weekly trade-count or loss limits. Nothing stops it from firing
+  repeatedly through a bad session.
+- This has NOT been tested end-to-end with a real signal flowing through
+  live signal generation → auto-trade → auto-close. Each piece has been
+  tested individually (manual order placement, contract resolution,
+  fill-confirmation) but the full automated loop has not been observed
+  running against live signals yet.
+
+## Recommended rollout for auto-close + wiring
+
+1. Leave `AUTO_TRADE_ENABLED` unset. Manually place a position via
+   `execute-signal`/`execute-option-signal(-auto)` with `direction` +
+   `stop_price`/`target_price` set, and watch the position monitor close it
+   when the level is hit (or use `close-position/:id` to force it and
+   confirm the mechanics work).
+2. Once the monitor is trusted, set `AUTO_TRADE_ENABLED=true` with a low
+   `AUTO_TRADE_QUANTITY` (1) and watch it fire on real signals for a while
+   before trusting it unsupervised.
+3. Given the below-50%-win-rate pattern already found in your Tradezella
+   history, treat this as something to watch closely rather than something
+   to leave running unattended — especially before any position-sizing or
+   loss-limit logic exists.
+
 ## Recommended rollout
 
 1. Run with `TRADIER_ENV=sandbox` against live signals for a few weeks.
