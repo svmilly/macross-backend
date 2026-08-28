@@ -185,6 +185,145 @@ async function cancelOrder(orderId) {
   return data.order;
 }
 
+// ── Options chain lookups (read-only market data) ───────────────────────────
+// These do NOT require TRADING_ENABLED — they're just data lookups, useful
+// for previewing what a signal would trade before actually placing an order.
+// They do still require a valid TRADIER_TRADING_TOKEN (or whichever token
+// is configured) since Tradier's market-data endpoints need an API key too.
+
+async function getQuote(symbol) {
+  const { data } = await client().get('/markets/quotes', {
+    params: { symbols: symbol.toUpperCase() },
+  });
+  const q = data?.quotes?.quote;
+  // Tradier returns an object for a single symbol, an array for multiple.
+  return Array.isArray(q) ? q[0] : q;
+}
+
+async function getExpirations(symbol) {
+  const { data } = await client().get('/markets/options/expirations', {
+    params: { symbol: symbol.toUpperCase(), includeAllRoots: true, strikes: false },
+  });
+  const dates = data?.expirations?.date;
+  if (!dates) return [];
+  return Array.isArray(dates) ? dates : [dates];
+}
+
+async function getStrikes(symbol, expiration) {
+  const { data } = await client().get('/markets/options/strikes', {
+    params: { symbol: symbol.toUpperCase(), expiration },
+  });
+  const strikes = data?.strikes?.strike;
+  if (!strikes) return [];
+  return Array.isArray(strikes) ? strikes : [strikes];
+}
+
+function daysBetween(dateStr) {
+  const target = new Date(dateStr + 'T00:00:00Z');
+  const today = new Date();
+  const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  return Math.round((target.getTime() - todayUTC) / 86400000);
+}
+
+// Pick the expiration closest to a target days-to-expiration, from the
+// underlying's actual listed expirations. targetDays=0 for 0DTE.
+function pickExpirationByDTE(expirations, targetDays) {
+  if (!expirations.length) return null;
+  let best = expirations[0];
+  let bestDiff = Infinity;
+  for (const exp of expirations) {
+    const dte = daysBetween(exp);
+    if (dte < 0) continue; // skip expired dates if the API ever returns any
+    const diff = Math.abs(dte - targetDays);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = exp;
+    }
+  }
+  return best;
+}
+
+// Pick the listed strike closest to spot * (1 ± pctOtm), OTM in the
+// direction implied by optionType (calls OTM = above spot, puts OTM = below).
+function pickStrikeByPctOtm(strikes, spot, optionType, pctOtm) {
+  if (!strikes.length) return null;
+  const direction = optionType.toLowerCase() === 'call' ? 1 : -1;
+  const target = spot * (1 + direction * pctOtm);
+  let best = strikes[0];
+  let bestDiff = Infinity;
+  for (const s of strikes) {
+    const diff = Math.abs(s - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = s;
+    }
+  }
+  return best;
+}
+
+// TRADE_TYPE_DTE maps a trade type to a target days-to-expiration. Tune here
+// if your DTE targets change — everything else derives from this.
+const TRADE_TYPE_DTE = {
+  '0dte': 0,
+  swing_short: 10,  // ~7-14 DTE band
+  swing_long: 35,   // ~30-45 DTE band
+};
+
+// Resolve a full contract (expiration, strike, occSymbol) from a
+// high-level trade description, using live data from Tradier's options
+// chain — so the picked strike/expiration always correspond to an actual
+// tradeable contract, not a computed value that might not exist.
+//
+// direction: 'bull' | 'bear'  →  optionType 'call' | 'put'
+// tradeType: '0dte' | 'swing_short' | 'swing_long'
+// pctOtm: fraction, e.g. 0.025 for 2.5% OTM (default)
+async function resolveContract({ underlying, direction, tradeType, pctOtm = 0.025 }) {
+  if (!TRADE_TYPE_DTE.hasOwnProperty(tradeType)) {
+    throw new Error(`Unknown tradeType "${tradeType}" — expected one of: ${Object.keys(TRADE_TYPE_DTE).join(', ')}`);
+  }
+  const optionType = direction === 'bull' ? 'call' : 'put';
+  const targetDays = TRADE_TYPE_DTE[tradeType];
+
+  const [quote, expirations] = await Promise.all([
+    getQuote(underlying),
+    getExpirations(underlying),
+  ]);
+
+  if (!quote || quote.last == null) {
+    throw new Error(`Could not get a live quote for ${underlying}`);
+  }
+  if (!expirations.length) {
+    throw new Error(`No listed option expirations found for ${underlying}`);
+  }
+
+  const expiration = pickExpirationByDTE(expirations, targetDays);
+  const actualDTE = daysBetween(expiration);
+
+  // Flag when 0DTE was requested but nothing expiring today/very soon exists
+  // (common for names without daily-listed options — most non-SPY/QQQ names).
+  const zeroDteUnavailable = tradeType === '0dte' && actualDTE > 1;
+
+  const strikes = await getStrikes(underlying, expiration);
+  if (!strikes.length) {
+    throw new Error(`No listed strikes found for ${underlying} exp ${expiration}`);
+  }
+  const strike = pickStrikeByPctOtm(strikes, quote.last, optionType, pctOtm);
+  const occSymbol = buildOptionSymbol({ underlying, expiration, optionType, strike });
+
+  return {
+    underlying: underlying.toUpperCase(),
+    optionType,
+    expiration,
+    actualDTE,
+    strike,
+    occSymbol,
+    spotPrice: quote.last,
+    pctOtm,
+    tradeType,
+    zeroDteUnavailable,
+  };
+}
+
 module.exports = {
   tradingEnabled,
   placeEquityOrder,
@@ -193,4 +332,8 @@ module.exports = {
   getOrderStatus,
   waitForFill,
   cancelOrder,
+  getQuote,
+  getExpirations,
+  getStrikes,
+  resolveContract,
 };

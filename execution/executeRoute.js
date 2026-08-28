@@ -12,7 +12,13 @@
 // so fills can be traced back to the signal that triggered them.
 
 const express = require('express');
-const { placeEquityOrder, placeOptionOrder, waitForFill, tradingEnabled } = require('./tradierOrders');
+const {
+  placeEquityOrder,
+  placeOptionOrder,
+  waitForFill,
+  tradingEnabled,
+  resolveContract,
+} = require('./tradierOrders');
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
 
@@ -227,6 +233,132 @@ module.exports = function (pool) {
       });
 
       res.status(500).json({ error: errPayload });
+    }
+  });
+
+  // GET /api/resolve-contract?underlying=AAPL&direction=bull&tradeType=swing_short&pctOtm=0.025
+  // Preview what execute-option-signal-auto would trade, without placing an order.
+  // Doesn't require TRADING_ENABLED — it's a read-only lookup against Tradier's
+  // live options chain.
+  router.get('/resolve-contract', async (req, res) => {
+    const { underlying, direction, tradeType, pctOtm } = req.query;
+    if (!underlying || !direction || !tradeType) {
+      return res.status(400).json({ error: 'underlying, direction, and tradeType are required' });
+    }
+    try {
+      const resolved = await resolveContract({
+        underlying,
+        direction,
+        tradeType,
+        pctOtm: pctOtm != null ? Number(pctOtm) : undefined,
+      });
+      res.json(resolved);
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      res.status(500).json({ error: errPayload });
+    }
+  });
+
+  // POST /api/execute-option-signal-auto
+  // Body: { underlying, direction (bull|bear), tradeType (0dte|swing_short|swing_long),
+  //         side (buy_to_open|sell_to_open|buy_to_close|sell_to_close),
+  //         quantity, pctOtm?, conviction?, signal_id? }
+  //
+  // Auto-selects expiration/strike/optionType from Tradier's live options
+  // chain based on direction + tradeType, then places the order exactly
+  // like execute-option-signal. Entries only — no auto-close, same as the
+  // manual endpoint. See execution/README.md.
+  router.post('/execute-option-signal-auto', async (req, res) => {
+    if (!tradingEnabled()) {
+      return res.status(403).json({ error: 'Trading is disabled (TRADING_ENABLED != true)' });
+    }
+
+    const { underlying, direction, tradeType, side, quantity, pctOtm, conviction, signal_id } = req.body;
+
+    if (!underlying || !direction || !tradeType || !side || !quantity) {
+      return res.status(400).json({
+        error: 'underlying, direction, tradeType, side, and quantity are required',
+      });
+    }
+
+    if (conviction != null && conviction < MIN_CONVICTION) {
+      await logOrder({
+        signal_id,
+        ticker: underlying,
+        side,
+        quantity,
+        status: 'skipped_low_conviction',
+        conviction_score: conviction,
+        asset_class: 'option',
+      });
+      return res.json({ skipped: true, reason: `conviction ${conviction} below threshold ${MIN_CONVICTION}` });
+    }
+
+    let resolved;
+    try {
+      resolved = await resolveContract({ underlying, direction, tradeType, pctOtm });
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      await logOrder({
+        signal_id,
+        ticker: underlying,
+        side,
+        quantity,
+        status: 'error_resolving_contract',
+        conviction_score: conviction,
+        error: JSON.stringify(errPayload),
+        asset_class: 'option',
+      });
+      return res.status(500).json({ error: errPayload });
+    }
+
+    try {
+      const { order } = await placeOptionOrder({
+        underlying,
+        occSymbol: resolved.occSymbol,
+        side,
+        quantity,
+        type: 'market',
+      });
+
+      const { status: confirmedStatus, order: confirmedOrder } =
+        order?.id != null ? await waitForFill(order.id) : { status: order?.status, order };
+
+      await logOrder({
+        signal_id,
+        tradier_order_id: order?.id != null ? String(order.id) : null,
+        ticker: underlying,
+        side,
+        quantity,
+        status: confirmedStatus,
+        conviction_score: conviction,
+        raw_response: confirmedOrder || order,
+        asset_class: 'option',
+        occ_symbol: resolved.occSymbol,
+        strike: resolved.strike,
+        expiration: resolved.expiration,
+        option_type: resolved.optionType,
+      });
+
+      res.json({ order: confirmedOrder || order, status: confirmedStatus, resolved });
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+
+      await logOrder({
+        signal_id,
+        ticker: underlying,
+        side,
+        quantity,
+        status: 'error',
+        conviction_score: conviction,
+        error: JSON.stringify(errPayload),
+        asset_class: 'option',
+        strike: resolved.strike,
+        expiration: resolved.expiration,
+        option_type: resolved.optionType,
+      });
+
+      res.status(500).json({ error: errPayload, resolved });
     }
   });
 

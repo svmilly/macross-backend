@@ -60,6 +60,32 @@ This matters most for options: a `sell_to_close` sent against a position
 that never actually filled will be rejected by Tradier, as seen in early
 sandbox testing here.
 
+## Auto contract selection (0DTE / swing)
+
+`execute-option-signal-auto` picks the contract for you instead of
+requiring an explicit expiration/strike:
+
+- `direction: 'bull'` → call, `direction: 'bear'` → put
+- `tradeType: '0dte' | 'swing_short' | 'swing_long'` maps to a target
+  days-to-expiration (0 / ~10 / ~35 respectively — see `TRADE_TYPE_DTE` in
+  `tradierOrders.js` to tune), then picks the closest **actual listed**
+  expiration from Tradier's chain — never a computed date that might not
+  exist.
+- Strike is picked at `pctOtm` (default 2.5%) out-of-the-money from the
+  live quote, snapped to the nearest **actual listed strike**.
+
+**0DTE caveat:** most tickers don't list daily expirations — this is
+mainly available on SPY, QQQ, and a handful of other high-volume names. If
+you request `0dte` on a name without same-day options, the resolver falls
+back to the nearest available expiration and the response's
+`zeroDteUnavailable: true` flag tells you that happened — check for that
+flag rather than assuming `0dte` always means today.
+
+**Preview before trading:** `GET /api/resolve-contract?underlying=AAPL&direction=bull&tradeType=swing_short`
+returns what would be selected (expiration, strike, occSymbol, spot price)
+without placing an order — useful for sanity-checking the selection logic
+before wiring it to real signals. Doesn't require `TRADING_ENABLED`.
+
 ## Options support
 
 `execute-option-signal` places **entry** orders only (`buy_to_open` /
