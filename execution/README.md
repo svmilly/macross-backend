@@ -99,6 +99,36 @@ Building auto-close is a separate, deliberate piece of work — treat any
 option position opened through this route as something you're watching
 and closing manually until that's built.
 
+## Screener → signals wiring (the real detection path)
+
+The dashboard's `addLog()` function — called every time `detectCross()`
+flags a genuine new/changed MA crossover on **live data** — now POSTs to
+`/api/signals` automatically, via `postSignalToBackend()`. This is the
+first time real crossover detection (not a manual insert) reaches the
+`signals` table, and from there the `AUTO_TRADE_ENABLED` watcher.
+
+**Sim/demo mode is explicitly excluded.** When live data fails to load,
+the dashboard falls back to `runSimulation()`, which generates fake
+crossovers so the UI isn't empty. `addLog()` checks `isSimMode` and skips
+the backend POST entirely for those — fake demo signals never reach the
+database or the auto-trade watcher. Only signals from `runScan()`'s live
+-data path (`isSimMode=false`) get logged.
+
+**Stop/target convention:** a fixed 1% stop / 2% target (2R) off the
+entry price, computed client-side at signal time — this is the "fixed R"
+approach `signals.js`'s own top comment suggested as a fallback before
+more sophisticated stop/target logic exists. Change `stopPct`/`targetPct`
+in `postSignalToBackend()` if you want different levels.
+
+**What this means in practice:** with `AUTO_TRADE_ENABLED=true`, leaving
+the dashboard open (or otherwise triggering `runScan()`) on live data can
+now place real (sandbox, unless `TRADIER_ENV=live`) orders with zero
+further action from you. This was previously untested — every order in
+this system so far came from a manual API call or a hand-inserted signal
+row, never the actual screener. Treat the first live sessions with this
+enabled as something to watch closely, not something to leave running
+unattended.
+
 ## Auto-close (position monitor)
 
 `execution/positionMonitor.js` runs on a 60-second interval and checks every
