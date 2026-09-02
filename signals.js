@@ -25,6 +25,7 @@ module.exports = function (pool) {
       or_window_minutes,
       stop_price,
       target_price,
+      tf,
     } = req.body;
 
     if (!ticker || !setup_type || !direction || !entry_price) {
@@ -37,8 +38,8 @@ module.exports = function (pool) {
       const result = await pool.query(
         `INSERT INTO signals
           (ticker, setup_type, conviction_score, direction, entry_price,
-           or_high, or_low, or_window_minutes, stop_price, target_price)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           or_high, or_low, or_window_minutes, stop_price, target_price, tf)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING *`,
         [
           ticker,
@@ -51,6 +52,7 @@ module.exports = function (pool) {
           or_window_minutes ?? null,
           stop_price ?? null,
           target_price ?? null,
+          tf ?? null,
         ]
       );
       res.status(201).json(result.rows[0]);

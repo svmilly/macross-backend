@@ -43,10 +43,26 @@ async function resolveOpenSignals(pool, getPrice) {
 }
 
 // Decide win/loss based on stop/target being hit.
-// If a signal has no stop_price/target_price set, this falls back to a
-// time-based scratch after 20 candles worth of elapsed time — adjust
-// SCRATCH_AFTER_MS to match your typical holding period.
-const SCRATCH_AFTER_MS = 100 * 60 * 1000; // 100 minutes, tune per setup
+// If a signal has no stop_price/target_price set, OR neither has been hit
+// yet, this falls back to a time-based scratch. The scratch window scales
+// with the signal's timeframe (tf) — a weekly-chart crossover is a
+// multi-week thesis and shouldn't be judged on a 100-minute clock the way
+// a 5-minute chart signal should. Each window here is roughly "15 bars
+// worth of time" for that timeframe — a heuristic, not a precise rule;
+// tune SCRATCH_WINDOWS_MS if your setups typically resolve faster/slower.
+const SCRATCH_WINDOWS_MS = {
+  '5m': 100 * 60 * 1000,          // 100 min  (~15 bars)
+  '15m': 4 * 60 * 60 * 1000,      // 4 hours  (~15 bars)
+  '1h': 2 * 24 * 60 * 60 * 1000,  // 2 days   (~15 bars across sessions)
+  '4h': 5 * 24 * 60 * 60 * 1000,  // 5 days   (~15 bars)
+  '1d': 21 * 24 * 60 * 60 * 1000, // 21 days  (~15 trading days)
+  '1wk': 105 * 24 * 60 * 60 * 1000, // 105 days (~15 weeks)
+};
+const DEFAULT_SCRATCH_MS = SCRATCH_WINDOWS_MS['5m']; // fallback for signals with no tf set (e.g. logged before this existed)
+
+function scratchWindowFor(signal) {
+  return SCRATCH_WINDOWS_MS[signal.tf] ?? DEFAULT_SCRATCH_MS;
+}
 
 function evaluateOutcome(signal, currentPrice) {
   const isLong = signal.direction === 'long';
@@ -62,7 +78,7 @@ function evaluateOutcome(signal, currentPrice) {
   }
 
   const elapsed = Date.now() - new Date(signal.entry_time).getTime();
-  if (elapsed > SCRATCH_AFTER_MS) return 'scratch';
+  if (elapsed > scratchWindowFor(signal)) return 'scratch';
 
   return null; // still open
 }

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS signals (
   direction TEXT NOT NULL CHECK (direction IN ('long', 'short')),
   entry_price NUMERIC NOT NULL,
   entry_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tf TEXT,                         -- '5m','15m','1h','4h','1d','1wk' — drives the resolver's scratch window
 
   -- ORB-specific fields (null for non-ORB setups)
   or_high NUMERIC,
@@ -75,3 +76,4 @@ CREATE INDEX IF NOT EXISTS idx_executed_orders_open ON executed_orders (is_close
 -- Signal→execution wiring: marks a signal as already acted on (traded or
 -- deliberately skipped), so the watcher never fires twice for the same row.
 ALTER TABLE signals ADD COLUMN IF NOT EXISTS auto_traded BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS tf TEXT;
