@@ -26,6 +26,8 @@ const {
   closePosition,
   getExpirations,
   getStrikes,
+  getQuote,
+  buildOptionSymbol,
 } = require('./tradierOrders');
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
@@ -337,6 +339,38 @@ module.exports = function (pool) {
     try {
       const strikes = await getStrikes(req.params.ticker.toUpperCase(), expiration);
       res.json({ ticker: req.params.ticker.toUpperCase(), expiration, strikes });
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      res.status(500).json({ error: errPayload });
+    }
+  });
+
+  // GET /api/option-quote?underlying=AAPL&expiration=YYYY-MM-DD&optionType=call&strike=230
+  // Live bid/ask/last for a specific contract — for showing a price before
+  // placing a manual order. Builds the OCC symbol server-side (reuses the
+  // same logic as everywhere else) so the frontend never has to construct
+  // one itself.
+  router.get('/option-quote', async (req, res) => {
+    const { underlying, expiration, optionType, strike } = req.query;
+    if (!underlying || !expiration || !optionType || !strike) {
+      return res.status(400).json({ error: 'underlying, expiration, optionType, and strike are required' });
+    }
+    try {
+      const occSymbol = buildOptionSymbol({ underlying, expiration, optionType, strike: Number(strike) });
+      const quote = await getQuote(occSymbol);
+      if (!quote) {
+        return res.status(404).json({ error: 'No quote returned for this contract' });
+      }
+      res.json({
+        occSymbol,
+        last: quote.last ?? null,
+        bid: quote.bid ?? null,
+        ask: quote.ask ?? null,
+        change: quote.change ?? null,
+        changePercentage: quote.change_percentage ?? null,
+        volume: quote.volume ?? null,
+        openInterest: quote.open_interest ?? null,
+      });
     } catch (err) {
       const errPayload = err.response?.data || { message: err.message };
       res.status(500).json({ error: errPayload });
