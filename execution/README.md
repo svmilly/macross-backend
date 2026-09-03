@@ -86,6 +86,15 @@ returns what would be selected (expiration, strike, occSymbol, spot price)
 without placing an order — useful for sanity-checking the selection logic
 before wiring it to real signals. Doesn't require `TRADING_ENABLED`.
 
+**Manual contract picker (Trade tab):** the dashboard's Trade tab (Option
+asset class) has two modes — "Auto-Select Contract" (as above) and
+"Choose Specific Contract", which pulls real listed expirations/strikes
+from Tradier live (via two new read-only routes,
+`GET /api/option-expirations/:ticker` and
+`GET /api/option-strikes/:ticker?expiration=YYYY-MM-DD`) so you can hand-pick
+an exact contract instead of letting the resolver choose one. Submits via
+the manual `execute-option-signal` endpoint below, not the auto one.
+
 ## Options support
 
 `execute-option-signal` places **entry** orders only (`buy_to_open` /

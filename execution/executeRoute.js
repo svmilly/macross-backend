@@ -24,6 +24,8 @@ const {
   tradingEnabled,
   resolveContract,
   closePosition,
+  getExpirations,
+  getStrikes,
 } = require('./tradierOrders');
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
@@ -306,6 +308,35 @@ module.exports = function (pool) {
         pctOtm: pctOtm != null ? Number(pctOtm) : undefined,
       });
       res.json(resolved);
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      res.status(500).json({ error: errPayload });
+    }
+  });
+
+  // GET /api/option-expirations/:ticker
+  // Real, live expirations from Tradier's options chain — for populating
+  // a manual contract picker in the dashboard. Read-only, doesn't require
+  // TRADING_ENABLED.
+  router.get('/option-expirations/:ticker', async (req, res) => {
+    try {
+      const expirations = await getExpirations(req.params.ticker.toUpperCase());
+      res.json({ ticker: req.params.ticker.toUpperCase(), expirations });
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      res.status(500).json({ error: errPayload });
+    }
+  });
+
+  // GET /api/option-strikes/:ticker?expiration=YYYY-MM-DD
+  router.get('/option-strikes/:ticker', async (req, res) => {
+    const { expiration } = req.query;
+    if (!expiration) {
+      return res.status(400).json({ error: 'expiration query param is required' });
+    }
+    try {
+      const strikes = await getStrikes(req.params.ticker.toUpperCase(), expiration);
+      res.json({ ticker: req.params.ticker.toUpperCase(), expiration, strikes });
     } catch (err) {
       const errPayload = err.response?.data || { message: err.message };
       res.status(500).json({ error: errPayload });
