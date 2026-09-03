@@ -350,6 +350,34 @@ module.exports = function (pool) {
   // placing a manual order. Builds the OCC symbol server-side (reuses the
   // same logic as everywhere else) so the frontend never has to construct
   // one itself.
+  // GET /api/stock-quote/:ticker
+  // Live underlying quote (last, change, day range, volume) — shown in the
+  // Trade tab as soon as a ticker is entered, so the person can see current
+  // pricing context while they pick an expiration/strike, not just the
+  // option contract's own quote.
+  router.get('/stock-quote/:ticker', async (req, res) => {
+    try {
+      const quote = await getQuote(req.params.ticker.toUpperCase());
+      if (!quote || quote.last == null) {
+        return res.status(404).json({ error: 'No quote returned for this ticker' });
+      }
+      res.json({
+        ticker: req.params.ticker.toUpperCase(),
+        last: quote.last ?? null,
+        change: quote.change ?? null,
+        changePercentage: quote.change_percentage ?? null,
+        open: quote.open ?? null,
+        high: quote.high ?? null,
+        low: quote.low ?? null,
+        prevClose: quote.prevclose ?? null,
+        volume: quote.volume ?? null,
+      });
+    } catch (err) {
+      const errPayload = err.response?.data || { message: err.message };
+      res.status(500).json({ error: errPayload });
+    }
+  });
+
   router.get('/option-quote', async (req, res) => {
     const { underlying, expiration, optionType, strike } = req.query;
     if (!underlying || !expiration || !optionType || !strike) {
