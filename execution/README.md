@@ -108,35 +108,25 @@ Building auto-close is a separate, deliberate piece of work — treat any
 option position opened through this route as something you're watching
 and closing manually until that's built.
 
-## Screener → signals wiring (the real detection path)
+## Signal detection: server-side, not client-side (signalScanner.js)
 
-The dashboard's `addLog()` function — called every time `detectCross()`
-flags a genuine new/changed MA crossover on **live data** — now POSTs to
-`/api/signals` automatically, via `postSignalToBackend()`. This is the
-first time real crossover detection (not a manual insert) reaches the
-`signals` table, and from there the `AUTO_TRADE_ENABLED` watcher.
+**This replaced an earlier, broken design** — worth understanding why, since it explains a real gap that went unnoticed for a while. The original approach had the dashboard's own `addLog()` POST each detected crossover to `/api/signals` via `postSignalToBackend()`, whenever `detectCross()` fired on live data. Two problems with that, discovered only after checking real usage:
 
-**Sim/demo mode is explicitly excluded.** When live data fails to load,
-the dashboard falls back to `runSimulation()`, which generates fake
-crossovers so the UI isn't empty. `addLog()` checks `isSimMode` and skips
-the backend POST entirely for those — fake demo signals never reach the
-database or the auto-trade watcher. Only signals from `runScan()`'s live
--data path (`isSimMode=false`) get logged.
+1. **Detection only ran while a browser tab was open.** If nobody had the dashboard open, nothing got scanned or logged — the resolver and stats pipeline had nothing to work with, no matter how correct their own logic was.
+2. **Even with a tab open, only ONE timeframe was ever scanned** — whichever one was currently selected (`runScan()` uses `currentTF`). The other five timeframes were completely dormant unless someone manually switched to and stayed on each one. A week of the dashboard being closed produced exactly zero new signals, confirmed by comparing `/api/signals/stats` calls a week apart with byte-identical totals.
 
-**Stop/target convention:** a fixed 1% stop / 2% target (2R) off the
-entry price, computed client-side at signal time — this is the "fixed R"
-approach `signals.js`'s own top comment suggested as a fallback before
-more sophisticated stop/target logic exists. Change `stopPct`/`targetPct`
-in `postSignalToBackend()` if you want different levels.
+`signalScanner.js` now runs the exact same detection math **server-side, continuously, across all 6 timeframes**, independent of any browser. It's a faithful line-for-line port of the dashboard's own `smaArr`/`detectCross`/`scoreConviction`/`buildStock` functions — not a reimplementation with different behavior — so server-side and client-side detection agree on what counts as a signal. It fetches all 58 tickers per timeframe (bounded concurrency, ~10 at a time against Yahoo), tracks each ticker's last-seen signal per timeframe in memory (mirroring the dashboard's own `prev` map, just one per timeframe instead of one shared across whichever tab was open), and logs to `signals` on every new/changed crossover using the same 1% stop / 2% target (2R) convention as before.
 
-**What this means in practice:** with `AUTO_TRADE_ENABLED=true`, leaving
-the dashboard open (or otherwise triggering `runScan()`) on live data can
-now place real (sandbox, unless `TRADIER_ENV=live`) orders with zero
-further action from you. This was previously untested — every order in
-this system so far came from a manual API call or a hand-inserted signal
-row, never the actual screener. Treat the first live sessions with this
-enabled as something to watch closely, not something to leave running
-unattended.
+**The dashboard's `postSignalToBackend()` call was removed** (function left as an inert no-op stub) — having both client and server post the same crossover would double-log every signal and skew your win-rate stats.
+
+**Runs automatically whenever `DATABASE_URL` is set** — no separate flag, same pattern as the resolver/position-monitor/signal-watcher. A full 6-timeframe × 58-ticker cycle involves ~350 Yahoo fetches and can take a few minutes; cycles run back-to-back with at least a 60-second gap, never overlapping.
+
+**Known limitations, stated plainly:**
+- In-memory "last signal" state resets on server restart — a restart could cause the very next crossover-consistent state to be re-logged as "new" even if it isn't, for one cycle. Minor, self-correcting.
+- Still uses Yahoo's unofficial API — same caveat as everywhere else in this app.
+- No per-timeframe stagger — all 6 timeframes run in the same sequential loop, so a slow Yahoo response on one timeframe delays the next.
+
+**What this means in practice:** with `AUTO_TRADE_ENABLED=true`, signals now fire and can trigger real (sandbox, unless `TRADIER_ENV=live`) orders **at any time, on any timeframe, whether or not anyone has the dashboard open.** This is a meaningfully bigger change in responsibility than before — previously the dashboard being closed acted as an accidental safety net; that's gone now. Treat this as something to actively monitor, not something to enable and forget.
 
 ## Auto-close (position monitor)
 
