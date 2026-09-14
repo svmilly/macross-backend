@@ -32,6 +32,27 @@ const {
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
 
+// Every order-placement error previously only captured err.response.data
+// (which can be as unhelpful as a bare string like "An error occurred
+// while communicating with the backend" — Tradier's own generic gateway
+// message) and was NEVER printed anywhere, only written to executed_orders.
+// That meant the only way to see a real failure was to query the DB row
+// directly, since Railway's Deploy Logs showed nothing at all for a failed
+// order (confirmed the hard way — an AMZN order failure left zero trace in
+// the console). This now captures the HTTP status/statusText alongside
+// the response body, and always prints to the console immediately so a
+// future failure is visible in Deploy Logs without a DB query.
+function extractErrorPayload(err, context) {
+  const payload = {
+    message: err.message,
+    status: err.response?.status ?? null,
+    statusText: err.response?.statusText ?? null,
+    data: err.response?.data ?? null,
+  };
+  console.error(`[${context}] order error:`, JSON.stringify(payload));
+  return payload;
+}
+
 module.exports = function (pool) {
   const router = express.Router();
 
@@ -174,7 +195,7 @@ module.exports = function (pool) {
 
       res.json({ order: confirmedOrder || order, status: confirmedStatus });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/execute-signal');
 
       await logOrder({
         signal_id,
@@ -276,7 +297,7 @@ module.exports = function (pool) {
 
       res.json({ order: confirmedOrder || order, occSymbol, status: confirmedStatus });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/execute-option-signal');
 
       await logOrder({
         signal_id,
@@ -311,7 +332,7 @@ module.exports = function (pool) {
       });
       res.json(resolved);
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/resolve-contract');
       res.status(500).json({ error: errPayload });
     }
   });
@@ -325,7 +346,7 @@ module.exports = function (pool) {
       const expirations = await getExpirations(req.params.ticker.toUpperCase());
       res.json({ ticker: req.params.ticker.toUpperCase(), expirations });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/option-expirations/:ticker');
       res.status(500).json({ error: errPayload });
     }
   });
@@ -340,7 +361,7 @@ module.exports = function (pool) {
       const strikes = await getStrikes(req.params.ticker.toUpperCase(), expiration);
       res.json({ ticker: req.params.ticker.toUpperCase(), expiration, strikes });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/option-strikes/:ticker');
       res.status(500).json({ error: errPayload });
     }
   });
@@ -373,7 +394,7 @@ module.exports = function (pool) {
         volume: quote.volume ?? null,
       });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/stock-quote/:ticker');
       res.status(500).json({ error: errPayload });
     }
   });
@@ -400,7 +421,7 @@ module.exports = function (pool) {
         openInterest: quote.open_interest ?? null,
       });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/option-quote');
       res.status(500).json({ error: errPayload });
     }
   });
@@ -446,7 +467,7 @@ module.exports = function (pool) {
     try {
       resolved = await resolveContract({ underlying, direction, tradeType, pctOtm });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/execute-option-signal-auto');
       await logOrder({
         signal_id,
         ticker: underlying,
@@ -495,7 +516,7 @@ module.exports = function (pool) {
 
       res.json({ order: confirmedOrder || order, status: confirmedStatus, resolved });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/execute-option-signal-auto');
 
       await logOrder({
         signal_id,
@@ -570,7 +591,7 @@ module.exports = function (pool) {
 
       res.json({ closed: true, position_id: id, close: closeResult });
     } catch (err) {
-      const errPayload = err.response?.data || { message: err.message };
+      const errPayload = extractErrorPayload(err, '/close-position/:id');
       res.status(500).json({ error: errPayload });
     }
   });
