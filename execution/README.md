@@ -247,7 +247,25 @@ Env vars (all optional except the two enable flags):
 3. Only then consider `TRADIER_ENV=live` with `TRADING_ENABLED=true`, and
    start with small size.
 
+## New: filtered strategy (ma_crossover_filtered) — runs alongside the original
+
+After the original MA13/48 crossover strategy showed a real, substantial-sample negative result (553 signals, 12.8% win rate, -68.52 total R as of Sept 15), `signalScanner.js` now also computes a second, stricter strategy from the exact same cross event — logged under `setup_type: 'ma_crossover_filtered'` so it can be compared directly against the original via `/api/signals/stats` (grouped by `setup_type`).
+
+**What's different about the filtered version:**
+- **ADX(14) ≥ 22 required** — skips crossovers fired in choppy/ranging conditions, the main mechanism behind MA-crossover whipsaws. `ADX_MIN` in `signalScanner.js`.
+- **Trend alignment** — price must sit on the correct side of a 100-period MA for the cross direction (bull cross needs price above it, bear needs below). This is a **same-timeframe long MA, not a genuinely separate higher timeframe** — a deliberate simplification to avoid doubling the Yahoo fetch load (~350 fetches/cycle already). If you want a true multi-timeframe trend filter later, that's a real, larger change, not a tweak.
+- **ATR-based stop/target** instead of flat 1%/2% — `stop = entry ± 1.5×ATR(14)`, `target = entry ± 3×ATR(14)` (still 2:1 reward:risk, just scaled to each ticker's actual volatility instead of one-size-fits-all).
+
+**Both strategies share the same trigger** — a stock either has a fresh MA13/48 cross or it doesn't; the filtered version just adds gates on top and, when it fires, is logged as a second, separate signal alongside the original. No extra Yahoo calls — both are computed from the same fetched OHLC.
+
+**Safe by default**: `AUTO_TRADE_SETUP_TYPES` (in `signalWatcher.js`) still defaults to `ma_crossover` only, so `ma_crossover_filtered` signals get logged and can accumulate backtest data, but will **never auto-trade** unless you explicitly add it to that env var later.
+
+**Data range extended for two timeframes**: daily went from 3mo→1y and weekly from 2y→5y, since the new 100-period trend MA needed more history than either range previously provided. This doesn't change the original MA13/48 cross detection at all — a wider trailing window feeding the same fixed-length SMA doesn't move that SMA's value at any given bar.
+
+**Not a promise of better results** — this targets the specific, identifiable weaknesses the data showed (whipsaws, flat risk sizing), not a guarantee. Let both strategies accumulate real signals before drawing conclusions, same caution as before: daily needs ~21 days to resolve, weekly needs ~105.
+
 ## Status
 
-Not yet wired into `server.js` — added as a standalone module. Mount it
-deliberately when ready.
+Both `signalScanner.js` (detection) and everything in `execution/` are
+fully wired into `server.js` and run automatically whenever
+`DATABASE_URL` is set — nothing here is standalone/unmounted.
