@@ -162,17 +162,57 @@ emergency exit. `GET /api/open-positions` lists everything currently open
 and being watched.
 
 **Known limitations, stated plainly:**
-- No market-hours guard — the monitor runs on its interval regardless of
-  whether the market is open. Off-hours quote behavior against this logic
-  is untested; treat that as an open question, not something we've verified
-  is safe.
+- Market-hours guard now exists (see Guardrails).
 - Only recognizes `buy`/`sell_short` (equity) and `buy_to_open`/
   `sell_to_open` (option) as positions it knows how to close. Anything else
   is left alone.
-- One closing attempt per hit per cycle — if the close order itself fails
-  (rejected, network error), the position stays open and gets picked up
-  again on the next 60s cycle. There's no backoff or alerting if it keeps
-  failing.
+- A failed close backs off 10 minutes before retrying, but there's no
+  alerting — watch Deploy Logs for "not filled — leaving open".
+
+## Guardrails (guardrails.js)
+
+Added after auto-trade was found running unsupervised with stacked and
+opposing positions. No schema changes required.
+
+**Signal watcher (entries)** — checked in this order for each new signal:
+
+1. `setup_type` not in `AUTO_TRADE_SETUP_TYPES` → marked seen, skipped.
+2. `tf` not in `AUTO_TRADE_TIMEFRAMES` → marked seen, skipped.
+3. **Older than its max age** → marked seen, skipped. Runs even while
+   `AUTO_TRADE_ENABLED` is off, so a backlog can never fire all at once
+   when auto-trade is turned back on.
+4. Conviction below `MIN_CONVICTION_TO_TRADE` → `skipped_low_conviction`.
+5. Auto-trade or trading disabled → left unmarked (step 3 expires it).
+6. **Market not open** (Tradier `/markets/clock`, handles holidays; falls
+   back to 9:30–16:00 ET weekdays) → left unmarked until open or stale.
+7. **Daily cap reached** → logged `skipped_daily_cap`.
+8. **Ticker already has an open or working position** (manual or auto) →
+   logged `skipped_existing_position`.
+
+Default max age per timeframe: 5m 10 min · 15m 30 min · 1h 90 min ·
+4h 5 h · 1d 36 h · 1wk 72 h (unknown `tf`: 30 min).
+
+| Var | Default | Notes |
+|---|---|---|
+| `AUTO_TRADE_TIMEFRAMES` | all six | e.g. `1h,4h,1d` |
+| `AUTO_TRADE_MAX_AGE_MINUTES` | per-tf table above | one override for every timeframe |
+| `AUTO_TRADE_MAX_PER_DAY` | `10` | entries per ET day; skipped/rejected/error rows don't count |
+| `AUTO_TRADE_ALLOW_STACKING` | off | `true` allows multiple positions per ticker |
+
+**Position monitor (exits):**
+
+- Every cycle, options past their expiration date are marked closed with
+  `close_reason='expired'` (no order sent).
+- Stop/target checks only run while the market is open.
+- A position is only marked closed when the closing order **fills**. A
+  rejected/unfilled close leaves it open and backs off 10 minutes.
+- Closing-order rows are written with `is_closed=true` so they never show
+  as open positions. Same in `POST /api/close-position/:id`, which now
+  returns `202 {closed:false}` if the close didn't fill.
+
+**Still not handled:** loss limits (no P&L tracking), position sizing, and
+short-timeframe signals paired with ~10 DTE contracts when
+`AUTO_TRADE_ASSET_CLASS=option`.
 
 ## Signal → execution wiring
 
@@ -214,11 +254,8 @@ Env vars (all optional except the two enable flags):
 - Fixed quantity per trade — no position sizing based on conviction,
   account equity, or risk. This is genuinely naive; treat
   `AUTO_TRADE_QUANTITY` as a placeholder, not a real sizing model.
-- No check for whether you already have an open position on the same
-  ticker — a second signal on a ticker you're already in will open a
-  second position, not add to or skip it.
-- No daily/weekly trade-count or loss limits. Nothing stops it from firing
-  repeatedly through a bad session.
+- One-position-per-ticker and a daily trade cap now exist (see Guardrails).
+  There is still no loss limit.
 - This has NOT been tested end-to-end with a real signal flowing through
   live signal generation → auto-trade → auto-close. Each piece has been
   tested individually (manual order placement, contract resolution,
