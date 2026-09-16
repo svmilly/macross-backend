@@ -324,7 +324,15 @@ async function resolveContract({ underlying, direction, tradeType, pctOtm = 0.02
   };
 }
 
+// Tradier market clock — handles holidays and half-days, unlike a local
+// weekday/time check. Returns state: 'open' | 'premarket' | 'postmarket' | 'closed'.
+async function getMarketClock() {
+  const { data } = await client().get('/markets/clock');
+  return data.clock;
+}
+
 module.exports = {
+  getMarketClock,
   tradingEnabled,
   placeEquityOrder,
   placeOptionOrder,

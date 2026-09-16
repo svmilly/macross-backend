@@ -560,12 +560,12 @@ module.exports = function (pool) {
 
       const closeResult = await closePosition(position);
 
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO executed_orders
           (signal_id, tradier_order_id, ticker, side, quantity, order_type,
            status, tradier_env, asset_class, occ_symbol, strike, expiration,
-           option_type, close_reason)
-         VALUES ($1,$2,$3,$4,$5,'market',$6,$7,$8,$9,$10,$11,$12,'manual')
+           option_type, close_reason, is_closed)
+         VALUES ($1,$2,$3,$4,$5,'market',$6,$7,$8,$9,$10,$11,$12,'manual',true)
          RETURNING id`,
         [
           position.signal_id,
@@ -581,15 +581,28 @@ module.exports = function (pool) {
           position.expiration,
           position.option_type,
         ]
-      ).then(async (r) => {
-        const closingOrderId = r.rows[0]?.id;
-        await pool.query(
-          `UPDATE executed_orders SET is_closed = true, closed_at = now(), closed_by_order_id = $1, close_reason = 'manual' WHERE id = $2`,
-          [closingOrderId, id]
-        );
-      });
+      );
+      const closingOrderId = insertResult.rows[0]?.id;
 
-      res.json({ closed: true, position_id: id, close: closeResult });
+      // Only mark the position closed if the closing order actually filled.
+      // Otherwise (rejected, still pending — e.g. sent outside market hours)
+      // it stays open and the response says so.
+      if (closeResult.status !== 'filled') {
+        return res.status(202).json({
+          closed: false,
+          position_id: id,
+          closing_order_id: closingOrderId,
+          close: closeResult,
+          message: `Closing order status is "${closeResult.status}", not filled — position left open. Check again with /api/executed-orders.`,
+        });
+      }
+
+      await pool.query(
+        `UPDATE executed_orders SET is_closed = true, closed_at = now(), closed_by_order_id = $1, close_reason = 'manual' WHERE id = $2`,
+        [closingOrderId, id]
+      );
+
+      res.json({ closed: true, position_id: id, closing_order_id: closingOrderId, close: closeResult });
     } catch (err) {
       const errPayload = extractErrorPayload(err, '/close-position/:id');
       res.status(500).json({ error: errPayload });

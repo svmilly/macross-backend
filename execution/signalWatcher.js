@@ -21,6 +21,23 @@
 //   AUTO_TRADE_TYPE           for options only: '0dte'|'swing_short'|'swing_long', default 'swing_short'
 //   AUTO_TRADE_PCT_OTM        for options only: default 0.025
 //   MIN_CONVICTION_TO_TRADE   shared with executeRoute.js, default 5
+//
+// Guardrails (see guardrails.js for defaults):
+//   AUTO_TRADE_TIMEFRAMES, AUTO_TRADE_MAX_AGE_MINUTES,
+//   AUTO_TRADE_MAX_PER_DAY, AUTO_TRADE_ALLOW_STACKING
+//
+// Order of checks for each unprocessed signal:
+//   1. setup_type not allowed      -> mark seen, no log row
+//   2. timeframe not allowed       -> mark seen, no log row
+//   3. older than its max age      -> mark seen, no log row (runs even while
+//                                     auto-trade is OFF, so a backlog can
+//                                     never fire all at once when turned on)
+//   4. conviction below minimum    -> log skipped_low_conviction, mark seen
+//   5. auto-trade/trading disabled -> leave unmarked (step 3 expires it later)
+//   6. market not open             -> leave unmarked (step 3 expires it later)
+//   7. daily cap reached           -> log skipped_daily_cap, mark seen
+//   8. ticker already has a position -> log skipped_existing_position, mark seen
+//   9. place the order
 
 const {
   placeEquityOrder,
@@ -29,6 +46,7 @@ const {
   resolveContract,
   tradingEnabled,
 } = require('./tradierOrders');
+const guardrails = require('./guardrails');
 
 const MIN_CONVICTION = Number(process.env.MIN_CONVICTION_TO_TRADE || 5);
 const ASSET_CLASS = process.env.AUTO_TRADE_ASSET_CLASS === 'option' ? 'option' : 'equity';
@@ -95,6 +113,19 @@ async function processSignal(pool, signal) {
     return;
   }
 
+  if (!guardrails.timeframeAllowed(signal.tf)) {
+    await markAutoTraded(pool, id); // timeframe not in AUTO_TRADE_TIMEFRAMES
+    return;
+  }
+
+  if (guardrails.isStale(signal)) {
+    console.log(
+      `signalWatcher: signal ${id} (${ticker} ${signal.tf}) expired unacted — older than ${guardrails.maxAgeMinutes(signal.tf)} min`
+    );
+    await markAutoTraded(pool, id);
+    return;
+  }
+
   if (conviction_score != null && conviction_score < MIN_CONVICTION) {
     await logOrder(pool, {
       signal_id: id,
@@ -113,6 +144,43 @@ async function processSignal(pool, signal) {
     // future run (once it IS enabled) can still act on this signal. This
     // branch mainly exists so the watcher can run harmlessly with logging
     // even before you're ready to flip it on.
+    return;
+  }
+
+  if (!(await guardrails.isMarketOpen())) {
+    // Leave unmarked: if the market opens while the signal is still within
+    // its max age it can trade then; otherwise the stale check expires it.
+    return;
+  }
+
+  const entrySide = direction === 'long' ? 'buy' : 'sell_short';
+
+  if (await guardrails.dailyCapReached(pool)) {
+    await logOrder(pool, {
+      signal_id: id,
+      ticker,
+      side: entrySide,
+      quantity: QUANTITY,
+      status: 'skipped_daily_cap',
+      conviction_score,
+      asset_class: ASSET_CLASS,
+    });
+    console.warn(`signalWatcher: daily cap (${guardrails.MAX_PER_DAY}) reached — skipped signal ${id} (${ticker})`);
+    await markAutoTraded(pool, id);
+    return;
+  }
+
+  if (await guardrails.hasOpenPosition(pool, ticker)) {
+    await logOrder(pool, {
+      signal_id: id,
+      ticker,
+      side: entrySide,
+      quantity: QUANTITY,
+      status: 'skipped_existing_position',
+      conviction_score,
+      asset_class: ASSET_CLASS,
+    });
+    await markAutoTraded(pool, id);
     return;
   }
 
